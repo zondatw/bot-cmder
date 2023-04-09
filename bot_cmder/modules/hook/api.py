@@ -1,13 +1,13 @@
 from fastapi import APIRouter
 from fastapi.logger import logger as fastapi_logger
 
-from .serializer import HookResponse
+from .serializer import HookRequest, HookResponse
 
 router = APIRouter()
 
 
 @router.post("/bot/hook")
-def bot_hook(req: dict) -> HookResponse:
+def bot_hook(req: HookRequest) -> HookResponse:
     fastapi_logger.debug(req)
     fastapi_logger.debug("-debug-")
     fastapi_logger.info("-info-")
