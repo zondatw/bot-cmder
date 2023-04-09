@@ -3,17 +3,12 @@ import logging
 import uvicorn
 from fastapi import FastAPI
 from fastapi.logger import logger as fastapi_logger
-from pydantic import BaseModel
+
+from modules.hook import router as hook_router
 
 logging.config.fileConfig("config/logging.conf", disable_existing_loggers=False)
 
 app = FastAPI()
-
-
-class HookResponse(BaseModel):
-    ok: bool
-    result: bool
-    description: str
 
 
 @app.get("/")
@@ -21,15 +16,7 @@ def read_root():
     return {"Hello": "World"}
 
 
-@app.post("/bot/hook")
-def bot_hook(req: dict) -> HookResponse:
-    fastapi_logger.debug(req)
-    fastapi_logger.debug("-debug-")
-    fastapi_logger.info("-info-")
-    fastapi_logger.warning("-warning-")
-    fastapi_logger.error("-error-")
-    return {"ok": True, "result": True, "description": "Get hook"}
-
+app.include_router(hook_router)
 
 if __name__ == "__main__":
     uvicorn.run(
