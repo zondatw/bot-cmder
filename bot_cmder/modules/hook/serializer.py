@@ -37,7 +37,7 @@ class Message(BaseModel):
     date: int
     text: str
     message_id: int
-    entities: List[Entry]
+    entities: List[Entry] | None = []
     from_: From
 
     class Config:
