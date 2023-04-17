@@ -3,3 +3,6 @@ __pycache__/
 
 # recording use
 test_recording.md
+
+# env
+.env

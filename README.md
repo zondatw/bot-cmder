@@ -14,6 +14,12 @@ poetry install
 pre-commit install --install-hooks
 ```
 
+### Create dot env file
+
+```text
+TELEGRAM_TOKEN=xxxxxxxxxxxxx
+```
+
 ## Qick start
 
 ```shell
