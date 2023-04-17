@@ -12,11 +12,15 @@ bot_command = BotCommand()
 
 @router.post("/bot/hook")
 async def bot_hook(req: HookRequest) -> HookResponse:
-    fastapi_logger.debug(req.message)
+    fastapi_logger.debug(req)
 
-    if (
-        req.message.entities
-        and req.message.entities[0].type == TelegramHook.Entities.BOT_COMMAND.value
-    ):
-        bot_command.request(req.message.text)
+    if req.message:
+        if (
+            req.message.entities
+            and req.message.entities[0].type == TelegramHook.Entities.BOT_COMMAND.value
+        ):
+            res, message = bot_command.request(req.message.chat.id, req.message.text)
+    elif req.callback_query:
+        fastapi_logger.debug(f"Callback query: {req.callback_query.data}")
+
     return {"ok": True, "result": True, "description": "Get hook"}
