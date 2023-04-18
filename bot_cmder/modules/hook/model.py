@@ -12,13 +12,27 @@ class BotCommand:
 
     def request(self, chat_id: int, command: str):
         self.parse(command)
-        return send_inline_keyboard(TELEGRAM_TOKEN, chat_id, "yooooooo")
+
+        if command == "/cmd":
+            return send_inline_keyboard(TELEGRAM_TOKEN, chat_id, "yooooooo")
+        elif command == "apple cmd":
+            return send_inline_keyboard(TELEGRAM_TOKEN, chat_id, "stage 2")
+        elif command == "orange cmd":
+            return answer_callback_query(TELEGRAM_TOKEN, chat_id, "stage 3")
+
+        return False, ""
 
     def parse(self, command: str):
         fastapi_logger.debug(f"Get command: {command}")
 
     def response(self):
         pass
+
+
+def answer_callback_query(token, callback_query_id, message):
+    url = f"https://api.telegram.org/bot{token}/answerCallbackQuery?callback_query_id={callback_query_id}&text={message}"
+    response = requests.get(url)
+    return response.status_code == 200, response.text
 
 
 def send_inline_keyboard(token: str, chat_id: int, message: str):

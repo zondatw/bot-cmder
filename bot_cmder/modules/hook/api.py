@@ -22,5 +22,8 @@ async def bot_hook(req: HookRequest) -> HookResponse:
             res, message = bot_command.request(req.message.chat.id, req.message.text)
     elif req.callback_query:
         fastapi_logger.debug(f"Callback query: {req.callback_query.data}")
+        res, message = bot_command.request(
+            req.callback_query.id, req.callback_query.data
+        )
 
     return {"ok": True, "result": True, "description": "Get hook"}
