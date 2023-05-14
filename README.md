@@ -18,6 +18,7 @@ pre-commit install --install-hooks
 
 ```text
 TELEGRAM_TOKEN=xxxxxxxxxxxxx
+TELEGRAM_HOOK_URL=https://xxxxx/bot/hook
 ```
 
 ## Qick start
