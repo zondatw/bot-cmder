@@ -13,6 +13,9 @@ dependencies = [
     "pydantic-settings>=2.2",
     "pyyaml>=6.0",
     "pyotp>=2.9",
+    # `requests` and `environs` were dropped along with the legacy
+    # bot_cmder/modules/hook/ + bot_cmder/settings/ packages: httpx and
+    # pydantic-settings cover those needs in the new layout.
 ]
 
 [dependency-groups]
