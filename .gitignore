@@ -1,8 +1,24 @@
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
 
 # recording use
 test_recording.md
 
-# env
+# secrets and runtime state
 .env
+config/app.yaml
+var/
+
+# uv venv
+.venv/
