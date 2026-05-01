@@ -24,8 +24,11 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - `SshConnector` over `asyncssh`: one persistent connection per host with TTL-based reuse, strict `known_hosts` checking, key auth only.
 - `SshConnectorPool` indexed by host name; lifecycle tied to FastAPI lifespan.
 - YAML config for `hosts:` (address / user / key_path / allowed_commands) and `services:` (hosts list + action templates like `restart: "sudo systemctl restart api.service"`).
-- `/service list` (SAFE), `/service status <name>` (SAFE; fan-out across all hosts in parallel) — read paths.
-- `/service restart <name> --host X` and `/service logs <name> --host X` (PRIVILEGED; TOTP-gated) — write paths require an explicit `--host`, no implicit fan-out.
+- `/service` is a **router** — adding `actions:` keys in yaml auto-registers `/service <action>` subcommands. No code change to add a new action; just yaml + restart.
+  - Read-shaped action names (`status`, `logs`, `sysinfo`, `df`, `top`, `ps`, `tail`, ...) classify as SAFE, fan out across every host in parallel.
+  - Everything else (`restart`, `deploy`, `drain`, ...) classifies as PRIVILEGED, TOTP-gated, refuses to run without explicit `--host X`.
+  - `/service list` and `/service info <name>` are hardcoded metadata subcommands.
+- `/runbook` is also a router with `list` (SAFE) and `run <name> [args...]` (PRIVILEGED).
 - `/ssh <host> <cmd...>` (PRIVILEGED) — escape hatch for ad-hoc commands; refused unless the joined command fully matches at least one regex in the host's `allowed_commands`.
 
 The Discord / Slack adapters arrive in subsequent phases.
@@ -178,24 +181,56 @@ services:
   api:
     hosts: [server-a]
     actions:
-      status:  "sudo systemctl status api.service"
-      restart: "sudo systemctl restart api.service"
-      logs:    "sudo journalctl -u api.service -n 100 --no-pager"
+      status:  "sudo systemctl status api.service"      # SAFE  fan-out
+      logs:    "sudo journalctl -u api.service -n 100"  # SAFE  fan-out
+      sysinfo: "uname -a"                               # SAFE  fan-out
+      restart: "sudo systemctl restart api.service"     # PRIV  --host required
 
 acl:
   commands:
+    # PRIVILEGED actions auto-classify if you don't list them, but
+    # adding a role rule here narrows it further.
     service_restart: ["role:sre"]
-    service_logs:    ["role:sre"]
     ssh:             ["role:sre"]
 ```
 
 Then in the bot DM:
 
 ```
-/service list                          → lists configured services + hosts
-/service status api                    → fans out across api's hosts in parallel
-/service restart api --host server-a   → asks for /otp, then SSH-restarts
+/service                              → router help (lists subcommands)
+/service list                         → lists configured services + hosts
+/service info api                     → shows api's hosts + each action's command
+/service status api                   → fan-out across api's hosts
+/service sysinfo api                  → fan-out (action name → SAFE)
+/service restart api --host server-a  → asks for /otp, then SSH-restarts
 /ssh server-a sudo systemctl status api.service   → asks for /otp, allowlist-checked
+```
+
+### Adding a new action
+
+Want `/service diskfree api`? Edit yaml, restart, done:
+
+```yaml
+services:
+  api:
+    actions:
+      diskfree: "df -h | head"   # 'df' is in _SAFE_ACTION_NAMES → auto-SAFE + fan-out
+```
+
+Want `/service drain api --host X`? Same thing — `drain` is not a
+read-shaped name, so it auto-classifies as PRIVILEGED:
+
+```yaml
+actions:
+  drain: "kubectl drain $(hostname) --ignore-daemonsets"
+```
+
+Then optionally narrow ACL:
+
+```yaml
+acl:
+  commands:
+    service_drain: ["role:sre"]
 ```
 
 ## Tests

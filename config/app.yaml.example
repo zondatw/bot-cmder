@@ -95,14 +95,35 @@ hosts: {}
 #     user: deploy
 #     key_path: /etc/bot-cmder/keys/server-b.ed25519
 
-# Phase 3 — services with predefined actions. /service status fans
-# out across hosts in parallel; /service restart and /service logs
-# require an explicit `--host <name>` argument.
+# Phase 3 — services with predefined actions.
+#
+# Each action key under a service auto-registers a corresponding
+# `/service <action>` subcommand on bot startup. Add `sysinfo:
+# "uname -a"` here, restart the bot, and `/service sysinfo <name>`
+# is live. No code change.
+#
+# Risk + execution shape derive from the action's *name*:
+#
+#   - Read-shaped names — status / logs / sysinfo / health / check /
+#     show / inspect / df / top / ps / ls / list / cat / tail / head /
+#     uptime / ping / ... — are SAFE. They fan out across every host
+#     in the service's `hosts` list in parallel; no --host needed,
+#     no OTP required (still gated by acl.commands.<key> if present).
+#   - Everything else (restart / deploy / drain / ...) is PRIVILEGED:
+#     TOTP-gated and refuses to run without an explicit `--host X`,
+#     even if there's only one host configured. Conservative default:
+#     "I don't know what `deploy` does, so ask twice."
+#
+# ACL config keys for the auto-registered subcommands stay
+# `acl.commands.service_<action>` (e.g. service_restart). You can
+# tighten read actions further by adding the same form there.
 services: {}
 # services:
 #   api:
 #     hosts: [server-a, server-b]
 #     actions:
-#       status:  "sudo systemctl status api.service"
-#       restart: "sudo systemctl restart api.service"
-#       logs:    "sudo journalctl -u api.service -n 100 --no-pager"
+#       status:  "sudo systemctl status api.service"      # SAFE  fan-out
+#       logs:    "sudo journalctl -u api.service -n 100"  # SAFE  fan-out
+#       sysinfo: "uname -a"                               # SAFE  fan-out
+#       restart: "sudo systemctl restart api.service"     # PRIV  --host required
+#       deploy:  "/usr/local/bin/deploy-api"              # PRIV  --host required
