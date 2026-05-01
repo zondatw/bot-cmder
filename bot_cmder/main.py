@@ -10,8 +10,12 @@ from bot_cmder.adapters.telegram import TelegramAdapter, TelegramClient
 from bot_cmder.adapters.telegram import make_router as telegram_router
 from bot_cmder.audit.log import AuditLogger
 from bot_cmder.auth.acl import check_allowed
+from bot_cmder.auth.pending import PendingOTPSessions
+from bot_cmder.auth.secret_store import SecretStore
+from bot_cmder.auth.totp import TOTPVerifier
 from bot_cmder.commands.builtin import install_all
-from bot_cmder.config.settings import get_settings, load_app_config
+from bot_cmder.config.schema import AppConfig
+from bot_cmder.config.settings import Settings, get_settings, load_app_config
 from bot_cmder.core.dispatcher import Dispatcher
 from bot_cmder.core.registry import CommandRegistry
 
@@ -39,21 +43,49 @@ def _setup_logging() -> None:
     logger.propagate = False
 
 
+def _build_totp(settings: Settings, config: AppConfig) -> tuple[TOTPVerifier | None, PendingOTPSessions | None]:
+    """Initialize TOTP infrastructure if BOT_CMDER_MASTER_KEY is set.
+
+    When the master key is missing, the OTP gate stays disabled —
+    privileged commands will then have no way to authorize and the
+    Dispatcher's bypass-when-pending-is-None branch refuses to run
+    them at all. Logged loudly because most prod deploys want it on.
+    """
+    if not settings.bot_cmder_master_key:
+        logger.warning("BOT_CMDER_MASTER_KEY not set — TOTP disabled, privileged commands cannot be authorized")
+        return None, None
+    try:
+        store = SecretStore(config.totp.secret_store_path, settings.bot_cmder_master_key)
+    except ValueError:
+        logger.exception("BOT_CMDER_MASTER_KEY is invalid; TOTP disabled")
+        return None, None
+    totp = TOTPVerifier(store)
+    pending = PendingOTPSessions(ttl_s=config.totp.session_ttl_s)
+    logger.info(
+        "TOTP enabled: secret_store=%s, session_ttl=%ds",
+        store.path,
+        config.totp.session_ttl_s,
+    )
+    return totp, pending
+
+
 def create_app() -> FastAPI:
     _setup_logging()
     settings = get_settings()
     config = load_app_config(settings)
 
     registry = CommandRegistry()
-    install_all(registry)
-
     audit = AuditLogger(config.audit.path)
+
+    totp, pending = _build_totp(settings, config)
+    install_all(registry, pending=pending, totp=totp, audit=audit)
 
     dispatcher = Dispatcher(
         registry=registry,
         config=config,
         audit=audit,
         acl_check=check_allowed,
+        pending=pending,
     )
 
     telegram_client: TelegramClient | None = None
