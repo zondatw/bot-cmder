@@ -16,9 +16,16 @@ dev:
 
 # Bring up a cloudflared quick tunnel, write its URL into .env as
 # TELEGRAM_HOOK_URL, register the webhook with Telegram, then keep
-# the tunnel running. Re-run after every cloudflared restart.
+# the tunnel running. Each run gives a fresh random subdomain.
 tunnel:
     bash scripts/tunnel.sh
+
+# Bring up an ngrok tunnel on your reserved static domain. The URL
+# is permanent across restarts, so DNS is always warm — much more
+# reliable than `just tunnel` for daily dev. One-time setup
+# instructions print on first run if NGROK_DOMAIN is not set.
+tunnel-ngrok:
+    bash scripts/tunnel_ngrok.sh
 
 # Run the test suite.
 test *args:

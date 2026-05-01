@@ -57,17 +57,37 @@ Local dev binds `127.0.0.1:47823` by default (intentionally uncommon to avoid cl
 ```shell
 just                                  # list tasks
 just dev                              # uvicorn with reload
-just tunnel                           # cloudflared quick tunnel + auto-update .env + register webhook
+just tunnel-ngrok                     # ngrok with reserved static domain (recommended)
+just tunnel                           # cloudflared quick tunnel (random subdomain each run)
+just hook-status                      # show Telegram webhook url / pending / last error
+just hook-watch                       # watch hook-status every 2s
 just test                             # pytest
 just lint                             # ruff + black --check
 just show-env-settings                # echo env vars
 just set-telegram-bot-webhook         # POST setWebhook to Telegram (manual; tunnel does this for you)
 ```
 
-Typical local dev loop: one terminal `just dev`, another `just tunnel`. The
-tunnel recipe re-registers the webhook every time you re-run it, so when
-cloudflared issues a new random subdomain you don't have to copy-paste
-URLs by hand.
+Typical local dev loop: one terminal `just dev`, another `just tunnel-ngrok`.
+Both tunnel recipes auto-update `.env` and re-register the webhook.
+
+### Tunnel: ngrok vs cloudflared
+
+| | `just tunnel-ngrok` | `just tunnel` |
+|---|---|---|
+| URL stability | static, never changes | fresh random `*.trycloudflare.com` per run |
+| DNS reliability | permanent record, always warm | 30–90s propagation lag, hits negative-cache failures |
+| Setup cost | one-time signup + reserve domain | none |
+| Recommended for | daily dev | quick experiments only |
+
+**ngrok one-time setup** (recommended path):
+
+```shell
+brew install ngrok
+ngrok config add-authtoken <token from https://dashboard.ngrok.com>
+# Reserve a free domain at https://dashboard.ngrok.com/domains, then:
+echo 'NGROK_DOMAIN=your-name.ngrok-free.app' >> .env
+just tunnel-ngrok
+```
 
 ## Tests
 
