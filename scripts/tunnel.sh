@@ -75,20 +75,44 @@ else
     echo "WARNING: .env not found, skipping .env update" >&2
 fi
 
-# Register with Telegram. Use python -c so the JSON payload is built
-# safely (the secret may contain shell-hostile characters).
-echo ">>> registering webhook with Telegram..."
+# Register with Telegram. Use python to build the JSON payload (the
+# secret may contain shell-hostile characters) and to omit
+# secret_token entirely when it is unset (Telegram requires 1-256
+# chars; an empty string is rejected).
 PAYLOAD=$(
     SECRET="${TELEGRAM_WEBHOOK_SECRET:-}" HOOK="${HOOK_URL}" python3 - <<'PY'
 import json, os
-print(json.dumps({"url": os.environ["HOOK"], "secret_token": os.environ.get("SECRET", "")}))
+payload = {"url": os.environ["HOOK"]}
+secret = os.environ.get("SECRET", "")
+if secret:
+    payload["secret_token"] = secret
+print(json.dumps(payload))
 PY
 )
-RESP=$(curl -fsSL -X POST \
-    "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
-    -H 'content-type: application/json' \
-    -d "${PAYLOAD}")
-echo ">>> Telegram says: ${RESP}"
+
+# Retry loop — fresh trycloudflare subdomains take a few seconds to
+# propagate to public DNS, and Telegram's resolver typically lags
+# briefly behind ours. Six tries x 5s = 30s budget, which has been
+# enough in practice.
+echo ">>> registering webhook with Telegram (DNS may take a few seconds)..."
+ATTEMPTS=6
+for attempt in $(seq 1 $ATTEMPTS); do
+    RESP=$(curl -sS -X POST \
+        "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
+        -H 'content-type: application/json' \
+        -d "${PAYLOAD}")
+    if echo "$RESP" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("ok") else 1)' 2>/dev/null; then
+        echo ">>> Telegram says: ${RESP}"
+        break
+    fi
+    if [[ $attempt -eq $ATTEMPTS ]]; then
+        echo "ERROR: setWebhook failed after ${ATTEMPTS} attempts. Last response:" >&2
+        echo "$RESP" >&2
+        exit 1
+    fi
+    echo ">>> attempt ${attempt}/${ATTEMPTS} failed, retrying in 5s: ${RESP}"
+    sleep 5
+done
 
 echo
 echo ">>> tunnel running. Ctrl-C to stop."
