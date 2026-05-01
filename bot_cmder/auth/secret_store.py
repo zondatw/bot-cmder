@@ -18,6 +18,13 @@ from threading import Lock
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from bot_cmder.storage import migrator
+
+# Migrations live next to this module under auth/migrations/. New
+# schema changes (added column, new table, new index) get a fresh
+# 000N_*.sql file there — never edit the existing ones.
+_MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+
 
 class SecretStoreError(Exception):
     """Base class for secret-store failures."""
@@ -61,15 +68,7 @@ class SecretStore:
 
     def _init_schema(self) -> None:
         with self._lock, self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS totp_secrets (
-                    user_norm_id     TEXT    PRIMARY KEY,
-                    secret_encrypted BLOB    NOT NULL,
-                    created_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
+            migrator.apply(conn, _MIGRATIONS_DIR)
 
     def set_secret(self, user_norm_id: str, secret_b32: str) -> None:
         """Store / overwrite a base32 TOTP secret for a user."""
