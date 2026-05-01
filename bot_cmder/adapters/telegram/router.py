@@ -50,9 +50,13 @@ def make_router(
 
 
 async def _process(adapter: TelegramAdapter, dispatcher: Dispatcher, msg: IncomingMessage) -> None:
+    logger.info("recv  %-22s chat=%s text=%r", msg.user.norm_id, msg.chat_id, msg.text)
     try:
         resp = await dispatcher.dispatch(msg)
-        if resp is not None:
-            await adapter.send(msg, resp)
+        if resp is None:
+            logger.info("no-op %-22s chat=%s (non-command)", msg.user.norm_id, msg.chat_id)
+            return
+        await adapter.send(msg, resp)
+        logger.info("sent  %-22s chat=%s bytes=%d", msg.user.norm_id, msg.chat_id, len(resp.text))
     except Exception:
         logger.exception("telegram dispatch failed for chat=%s", msg.chat_id)

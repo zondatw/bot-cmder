@@ -18,7 +18,29 @@ from bot_cmder.core.registry import CommandRegistry
 logger = logging.getLogger("bot_cmder")
 
 
+def _setup_logging() -> None:
+    """Configure the `bot_cmder.*` logger tree once.
+
+    Idempotent so tests / repeated create_app() calls don't pile up
+    handlers. We deliberately don't touch the root logger so uvicorn's
+    own access logs keep their formatting.
+    """
+    if logger.handlers:
+        return
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)-5s %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    )
+    logger.addHandler(handler)
+    logger.propagate = False
+
+
 def create_app() -> FastAPI:
+    _setup_logging()
     settings = get_settings()
     config = load_app_config(settings)
 
