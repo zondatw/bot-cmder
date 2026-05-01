@@ -16,6 +16,7 @@ from bot_cmder.auth.totp import TOTPVerifier
 from bot_cmder.commands.builtin import install_all
 from bot_cmder.config.schema import AppConfig
 from bot_cmder.config.settings import Settings, get_settings, load_app_config
+from bot_cmder.connectors.ssh import SshConnectorPool
 from bot_cmder.core.dispatcher import Dispatcher
 from bot_cmder.core.registry import CommandRegistry
 
@@ -78,7 +79,14 @@ def create_app() -> FastAPI:
     audit = AuditLogger(config.audit.path)
 
     totp, pending = _build_totp(settings, config)
-    install_all(registry, pending=pending, totp=totp, audit=audit)
+    ssh_pool = SshConnectorPool(config.hosts, config.ssh)
+    if config.hosts:
+        logger.info(
+            "ssh pool configured: %d host(s) — %s",
+            len(config.hosts),
+            ", ".join(sorted(config.hosts)),
+        )
+    install_all(registry, pending=pending, totp=totp, audit=audit, ssh_pool=ssh_pool)
 
     dispatcher = Dispatcher(
         registry=registry,
@@ -113,6 +121,7 @@ def create_app() -> FastAPI:
         finally:
             if telegram_client is not None:
                 await telegram_client.aclose()
+            await ssh_pool.close_all()
 
     app = FastAPI(lifespan=lifespan, title="bot-cmder", version="0.1.0")
 
