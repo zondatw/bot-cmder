@@ -20,7 +20,15 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - `/kubectl <subcmd> [args...]` — whitelisted (default get/describe/logs/rollout/scale/top), KUBECONFIG honored, output truncated.
 - `/runbook-list` (SAFE) and `/runbook-run <name> [args...]` (PRIVILEGED) — discovers executable scripts in `runbooks/`, rejects path traversal and shell metacharacters in args.
 
-The SSH connector + `/service` actions and the Discord / Slack adapters arrive in subsequent phases.
+**Phase 3** — SSH connector + service actions ⭐ the core SRE use case
+- `SshConnector` over `asyncssh`: one persistent connection per host with TTL-based reuse, strict `known_hosts` checking, key auth only.
+- `SshConnectorPool` indexed by host name; lifecycle tied to FastAPI lifespan.
+- YAML config for `hosts:` (address / user / key_path / allowed_commands) and `services:` (hosts list + action templates like `restart: "sudo systemctl restart api.service"`).
+- `/service-list` (SAFE), `/service-status <name>` (SAFE; fan-out across all hosts in parallel) — read paths.
+- `/service-restart <name> --host X` and `/service-logs <name> --host X` (PRIVILEGED; TOTP-gated) — write paths require an explicit `--host`, no implicit fan-out.
+- `/ssh <host> <cmd...>` (PRIVILEGED) — escape hatch for ad-hoc commands; refused unless the joined command fully matches at least one regex in the host's `allowed_commands`.
+
+The Discord / Slack adapters arrive in subsequent phases.
 
 ## Setup
 
@@ -134,6 +142,61 @@ Then in the bot DM:
 
 Audit log records every step: `OTP_REQUESTED`, `OTP_INVALID`,
 `OTP_CROSS_CHAT`, `OTP_EXPIRED`, `EXECUTED ... via_otp=true`.
+
+## SSH host setup (Phase 3)
+
+`/service-*` and `/ssh` need `config.hosts` populated and the bot
+process able to SSH into each host non-interactively.
+
+```shell
+# 1. On the bot host: generate a dedicated SSH key per remote host
+#    (one key per host limits blast radius if any single one leaks).
+ssh-keygen -t ed25519 -N "" -f /etc/bot-cmder/keys/server-a.ed25519 \
+           -C "bot-cmder@server-a"
+
+# 2. On the remote: install the public key for a low-priv account
+#    that has the specific sudo rules you need.
+#    (sudoers: `bot ALL=(root) NOPASSWD: /bin/systemctl restart api.service`)
+ssh-copy-id -i /etc/bot-cmder/keys/server-a.ed25519.pub deploy@10.0.1.5
+
+# 3. Pin the host key (strict checking is on by default).
+ssh-keyscan -H 10.0.1.5 >> ~/.ssh/known_hosts
+```
+
+Then add the host to `config/app.yaml`:
+
+```yaml
+hosts:
+  server-a:
+    address: 10.0.1.5
+    user: deploy
+    key_path: /etc/bot-cmder/keys/server-a.ed25519
+    allowed_commands:
+      - "^sudo systemctl (status|restart) api\\.service$"
+
+services:
+  api:
+    hosts: [server-a]
+    actions:
+      status:  "sudo systemctl status api.service"
+      restart: "sudo systemctl restart api.service"
+      logs:    "sudo journalctl -u api.service -n 100 --no-pager"
+
+acl:
+  commands:
+    service-restart: ["role:sre"]
+    service-logs:    ["role:sre"]
+    ssh:             ["role:sre"]
+```
+
+Then in the bot DM:
+
+```
+/service-list                          → lists configured services + hosts
+/service-status api                    → fans out across api's hosts in parallel
+/service-restart api --host server-a   → asks for /otp, then SSH-restarts
+/ssh server-a sudo systemctl status api.service   → asks for /otp, allowlist-checked
+```
 
 ## Tests
 
