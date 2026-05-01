@@ -7,7 +7,7 @@ string, otherwise the request is refused before the SSH session
 even opens. Hosts with no `allowed_commands` configured deny every
 /ssh call by default — no implicit "allow anything" mode.
 
-For day-to-day work, prefer `/service_restart` etc. over `/ssh`.
+For day-to-day work, prefer `/service restart` etc. over `/ssh`.
 This command exists for the moment when something is broken in a
 way the predefined service actions don't cover.
 """

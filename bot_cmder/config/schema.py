@@ -80,7 +80,7 @@ class KubectlConfig(BaseModel):
 
 
 class RunbookConfig(BaseModel):
-    """Phase 2 /runbook_list and /runbook_run builtin settings."""
+    """Phase 2 /runbook list and /runbook run builtin settings."""
 
     dir: Path = Path("./runbooks")
     max_output_bytes: int = 3500

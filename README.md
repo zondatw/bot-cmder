@@ -18,14 +18,14 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - `/otp` builtin enforces same-chat / same-platform OTP delivery, expiry, replay, and emits distinct audit events for each failure mode.
 - Admin CLI: `python -m bot_cmder.cli {enroll,list,revoke}-totp` (or `just enroll-totp <user>`).
 - `/kubectl <subcmd> [args...]` — whitelisted (default get/describe/logs/rollout/scale/top), KUBECONFIG honored, output truncated.
-- `/runbook_list` (SAFE) and `/runbook_run <name> [args...]` (PRIVILEGED) — discovers executable scripts in `runbooks/`, rejects path traversal and shell metacharacters in args.
+- `/runbook list` (SAFE) and `/runbook run <name> [args...]` (PRIVILEGED) — discovers executable scripts in `runbooks/`, rejects path traversal and shell metacharacters in args.
 
 **Phase 3** — SSH connector + service actions ⭐ the core SRE use case
 - `SshConnector` over `asyncssh`: one persistent connection per host with TTL-based reuse, strict `known_hosts` checking, key auth only.
 - `SshConnectorPool` indexed by host name; lifecycle tied to FastAPI lifespan.
 - YAML config for `hosts:` (address / user / key_path / allowed_commands) and `services:` (hosts list + action templates like `restart: "sudo systemctl restart api.service"`).
-- `/service_list` (SAFE), `/service_status <name>` (SAFE; fan-out across all hosts in parallel) — read paths.
-- `/service_restart <name> --host X` and `/service_logs <name> --host X` (PRIVILEGED; TOTP-gated) — write paths require an explicit `--host`, no implicit fan-out.
+- `/service list` (SAFE), `/service status <name>` (SAFE; fan-out across all hosts in parallel) — read paths.
+- `/service restart <name> --host X` and `/service logs <name> --host X` (PRIVILEGED; TOTP-gated) — write paths require an explicit `--host`, no implicit fan-out.
 - `/ssh <host> <cmd...>` (PRIVILEGED) — escape hatch for ad-hoc commands; refused unless the joined command fully matches at least one regex in the host's `allowed_commands`.
 
 The Discord / Slack adapters arrive in subsequent phases.
@@ -46,7 +46,7 @@ TELEGRAM_TOKEN=xxxxxxxxxxxxx
 TELEGRAM_WEBHOOK_SECRET=any-long-random-string
 APP_CONFIG_PATH=./config/app.yaml
 
-# Phase 2 — required for /kubectl, /runbook_run and any Risk.PRIVILEGED command
+# Phase 2 — required for /kubectl, /runbook run and any Risk.PRIVILEGED command
 BOT_CMDER_MASTER_KEY=<run `just gen-master-key` to generate>
 ```
 
@@ -115,7 +115,7 @@ just tunnel-ngrok
 
 ## TOTP enrollment (Phase 2)
 
-Privileged commands (`/kubectl`, `/runbook_run`) require a TOTP code
+Privileged commands (`/kubectl`, `/runbook run`) require a TOTP code
 delivered out-of-band, stored per-user encrypted at rest with
 `BOT_CMDER_MASTER_KEY`.
 
@@ -145,7 +145,7 @@ Audit log records every step: `OTP_REQUESTED`, `OTP_INVALID`,
 
 ## SSH host setup (Phase 3)
 
-`/service_*` and `/ssh` need `config.hosts` populated and the bot
+`/service *` and `/ssh` need `config.hosts` populated and the bot
 process able to SSH into each host non-interactively.
 
 ```shell
@@ -192,9 +192,9 @@ acl:
 Then in the bot DM:
 
 ```
-/service_list                          → lists configured services + hosts
-/service_status api                    → fans out across api's hosts in parallel
-/service_restart api --host server-a   → asks for /otp, then SSH-restarts
+/service list                          → lists configured services + hosts
+/service status api                    → fans out across api's hosts in parallel
+/service restart api --host server-a   → asks for /otp, then SSH-restarts
 /ssh server-a sudo systemctl status api.service   → asks for /otp, allowlist-checked
 ```
 
