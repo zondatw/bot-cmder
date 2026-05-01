@@ -2,16 +2,25 @@
 
 Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (Discord and Slack land in later phases) when you are away from a computer and prod has issues.
 
-## What's in this release (Phase 1)
+## What's in this release
 
+**Phase 1** — multi-platform foundation
 - FastAPI service exposing `POST /webhooks/telegram` and `GET /healthz`.
 - Telegram adapter on `httpx` (no URL-encoding bugs from the legacy demo).
 - `CommandRegistry` + decorator-style registration; `Dispatcher` with structured JSONL audit log.
 - ACL via YAML config: per-command allow lists and `role:<name>` expansion.
 - Builtins: `/help`, `/whoami`, `/health [target ...]`.
-- Connector layer (`LocalConnector`) ready for Phase 2's `kubectl` / `runbook` builtins and Phase 3's `SshConnector`.
 
-TOTP-gated privileged commands (`/kubectl`, `/runbook`), the SSH connector + `/service` actions, and the Discord / Slack adapters arrive in subsequent phases.
+**Phase 2** — TOTP gate + privileged commands
+- `BOT_CMDER_MASTER_KEY` + Fernet-encrypted SQLite secret store for TOTP secrets.
+- Replay-protected `TOTPVerifier` over `pyotp`.
+- OTP gate in `Dispatcher`: any `Risk.PRIVILEGED` command stashes a `PendingOTPSession` and asks the user for `/otp <code>` (configurable TTL, default 120s).
+- `/otp` builtin enforces same-chat / same-platform OTP delivery, expiry, replay, and emits distinct audit events for each failure mode.
+- Admin CLI: `python -m bot_cmder.cli {enroll,list,revoke}-totp` (or `just enroll-totp <user>`).
+- `/kubectl <subcmd> [args...]` — whitelisted (default get/describe/logs/rollout/scale/top), KUBECONFIG honored, output truncated.
+- `/runbook-list` (SAFE) and `/runbook-run <name> [args...]` (PRIVILEGED) — discovers executable scripts in `runbooks/`, rejects path traversal and shell metacharacters in args.
+
+The SSH connector + `/service` actions and the Discord / Slack adapters arrive in subsequent phases.
 
 ## Setup
 
@@ -28,6 +37,9 @@ Create a `.env` (see `.env.example`):
 TELEGRAM_TOKEN=xxxxxxxxxxxxx
 TELEGRAM_WEBHOOK_SECRET=any-long-random-string
 APP_CONFIG_PATH=./config/app.yaml
+
+# Phase 2 — required for /kubectl, /runbook-run and any Risk.PRIVILEGED command
+BOT_CMDER_MASTER_KEY=<run `just gen-master-key` to generate>
 ```
 
 Create `config/app.yaml` (see `config/app.yaml.example`):
@@ -65,6 +77,10 @@ just test                             # pytest
 just lint                             # ruff + black --check
 just show-env-settings                # echo env vars
 just set-telegram-bot-webhook         # POST setWebhook to Telegram (manual; tunnel does this for you)
+just gen-master-key                   # generate a fresh BOT_CMDER_MASTER_KEY for .env
+just enroll-totp <user>               # enroll a user for TOTP (e.g. telegram:111)
+just list-totp                        # list TOTP-enrolled users
+just revoke-totp <user>               # drop a user's TOTP enrollment
 ```
 
 Typical local dev loop: one terminal `just dev`, another `just tunnel-ngrok`.
@@ -88,6 +104,36 @@ ngrok config add-authtoken <token from https://dashboard.ngrok.com>
 echo 'NGROK_DOMAIN=your-name.ngrok-free.app' >> .env
 just tunnel-ngrok
 ```
+
+## TOTP enrollment (Phase 2)
+
+Privileged commands (`/kubectl`, `/runbook-run`) require a TOTP code
+delivered out-of-band, stored per-user encrypted at rest with
+`BOT_CMDER_MASTER_KEY`.
+
+```shell
+# 1. Generate a master key once and put it in .env.
+echo "BOT_CMDER_MASTER_KEY=$(just gen-master-key)" >> .env
+
+# 2. Enroll yourself; copy the otpauth:// URI into 1Password /
+#    Authy / Google Authenticator (or pipe through `qrencode`).
+just enroll-totp telegram:111111111
+
+# 3. Restart the bot so it picks up the new key.
+just dev
+```
+
+Then in the bot DM:
+
+```
+/kubectl get pods
+  → "Privileged command. Reply with: /otp <6-digit-code> within 120s"
+/otp 654321
+  → kubectl output
+```
+
+Audit log records every step: `OTP_REQUESTED`, `OTP_INVALID`,
+`OTP_CROSS_CHAT`, `OTP_EXPIRED`, `EXECUTED ... via_otp=true`.
 
 ## Tests
 

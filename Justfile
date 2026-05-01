@@ -81,3 +81,21 @@ send-text-to-user user_id text:
         -H 'content-type: application/json' \
         -d "{\"chat_id\": $1, \"text\": \"$2\"}"
     @echo
+
+# Generate a fresh TOTP secret for a user and print the otpauth URI.
+# Use the URI with any QR generator or paste into 1Password / Authy.
+enroll-totp user:
+    uv run python -m bot_cmder.cli enroll-totp --user {{user}}
+
+# List every user with a stored TOTP enrollment.
+list-totp:
+    uv run python -m bot_cmder.cli list-totp
+
+# Drop one user's TOTP enrollment.
+revoke-totp user:
+    uv run python -m bot_cmder.cli revoke-totp --user {{user}}
+
+# Print a fresh BOT_CMDER_MASTER_KEY suitable for .env.
+# WARNING: regenerating this invalidates every existing enrollment.
+gen-master-key:
+    @uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
