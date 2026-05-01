@@ -73,21 +73,39 @@ def test_create_app_registers_every_builtin():
     reg = CommandRegistry()
     install_all(reg, pending=pending, totp=totp, audit=audit, ssh_pool=pool)
 
-    names = {c.name for c in reg.all()}
-    assert names == {
+    # Top-level chat surface: every safe + privileged Command, plus
+    # the routers (whose subcommands are nested, not top-level).
+    top_level = {c.name for c in reg.all()} | {r.name for r in reg.all_routers()}
+    assert top_level == {
         # Phase 1
         "help",
         "whoami",
         "health",
-        # Phase 2
+        # Phase 2 (kubectl + otp top-level; runbook moved under router)
         "kubectl",
+        "otp",
+        "runbook",
+        # Phase 3 (ssh top-level; service is a router)
+        "ssh",
+        "service",
+    }
+
+    # And the router-flattened set still has every executable command,
+    # under its synthetic <router>_<sub> internal name (which ACL config
+    # keys + audit `command=` field still address by).
+    executable = {c.name for c in reg.all_executable_commands()}
+    assert executable == {
+        "help",
+        "whoami",
+        "health",
+        "kubectl",
+        "otp",
+        "ssh",
         "runbook_list",
         "runbook_run",
-        "otp",
-        # Phase 3
-        "ssh",
         "service_list",
         "service_status",
+        "service_info",
         "service_restart",
         "service_logs",
     }

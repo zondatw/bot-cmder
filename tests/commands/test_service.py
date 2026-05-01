@@ -73,7 +73,7 @@ def _setup(
 @pytest.mark.asyncio
 async def test_list_when_no_services(tmp_path):
     reg, ctx, *_ = _setup(tmp_path, hosts={}, services={})
-    resp = await reg.get("service_list").handler(ctx, [])
+    resp = await reg.get_router("service").get_subcommand("list").handler(ctx, [])
     assert "no services" in resp.text
 
 
@@ -89,7 +89,7 @@ async def test_list_shows_services_hosts_and_actions(tmp_path):
             )
         },
     )
-    resp = await reg.get("service_list").handler(ctx, [])
+    resp = await reg.get_router("service").get_subcommand("list").handler(ctx, [])
     assert "api" in resp.text
     assert "server-a" in resp.text
     assert "restart" in resp.text and "status" in resp.text
@@ -111,7 +111,7 @@ async def test_status_fans_out_in_parallel_to_every_host(tmp_path):
         )
     }
     reg, ctx, pool, audit_path = _setup(tmp_path, hosts=hosts, services=services)
-    resp = await reg.get("service_status").handler(ctx, ["api"])
+    resp = await reg.get_router("service").get_subcommand("status").handler(ctx, ["api"])
     # Both hosts called.
     assert pool.for_host("server-a").calls == [["sh", "-c", "sudo systemctl status api.service"]]
     assert pool.for_host("server-b").calls == [["sh", "-c", "sudo systemctl status api.service"]]
@@ -133,7 +133,7 @@ async def test_status_includes_first_failure_stderr_inline(tmp_path):
         "server-b": ExecResult(3, "", "Unit api.service not found", 5, "ssh:server-b"),
     }
     reg, ctx, _, _ = _setup(tmp_path, hosts=hosts, services=services, canned_per_host=canned)
-    resp = await reg.get("service_status").handler(ctx, ["api"])
+    resp = await reg.get_router("service").get_subcommand("status").handler(ctx, ["api"])
     assert "Unit api.service not found" in resp.text
     assert "server-b" in resp.text
 
@@ -141,7 +141,7 @@ async def test_status_includes_first_failure_stderr_inline(tmp_path):
 @pytest.mark.asyncio
 async def test_status_unknown_service(tmp_path):
     reg, ctx, *_ = _setup(tmp_path, hosts={}, services={})
-    resp = await reg.get("service_status").handler(ctx, ["ghost"])
+    resp = await reg.get_router("service").get_subcommand("status").handler(ctx, ["ghost"])
     assert "unknown service" in resp.text
 
 
@@ -152,7 +152,7 @@ async def test_status_service_without_status_action(tmp_path):
         hosts={"a": HostSpec(address="a", user="u")},
         services={"api": ServiceSpec(hosts=["a"], actions={"restart": "R"})},
     )
-    resp = await reg.get("service_status").handler(ctx, ["api"])
+    resp = await reg.get_router("service").get_subcommand("status").handler(ctx, ["api"])
     assert "no 'status' action" in resp.text
 
 
@@ -164,12 +164,15 @@ async def test_restart_requires_explicit_host_flag(tmp_path):
     hosts = {"a": HostSpec(address="a", user="u")}
     services = {"api": ServiceSpec(hosts=["a"], actions={"restart": "R"})}
     reg, ctx, *_ = _setup(tmp_path, hosts=hosts, services=services)
-    resp = await reg.get("service_restart").handler(ctx, ["api"])
+    resp = await reg.get_router("service").get_subcommand("restart").handler(ctx, ["api"])
     assert "usage" in resp.text and "--host" in resp.text
-    # Regression: usage string must reference the underscore name,
-    # not the legacy hyphenated one (an f-string `/service-{action}`
-    # got missed in the rename sweep).
-    assert "/service_restart" in resp.text
+    # Regression: usage string must reference the new router-style
+    # surface (`/service restart`), not the legacy `/service_restart`
+    # underscored form or the original hyphenated `/service-restart`
+    # — the f-string keeps drifting and tests are the only thing
+    # catching it.
+    assert "/service restart" in resp.text
+    assert "/service_restart" not in resp.text
     assert "/service-restart" not in resp.text
 
 
@@ -178,7 +181,7 @@ async def test_restart_rejects_host_not_in_service(tmp_path):
     hosts = {"a": HostSpec(address="a", user="u"), "b": HostSpec(address="b", user="u")}
     services = {"api": ServiceSpec(hosts=["a"], actions={"restart": "R"})}
     reg, ctx, *_ = _setup(tmp_path, hosts=hosts, services=services)
-    resp = await reg.get("service_restart").handler(ctx, ["api", "--host", "b"])
+    resp = await reg.get_router("service").get_subcommand("restart").handler(ctx, ["api", "--host", "b"])
     assert "not in service" in resp.text
 
 
@@ -192,7 +195,7 @@ async def test_restart_runs_action_on_named_host_and_audits(tmp_path):
         )
     }
     reg, ctx, pool, audit_path = _setup(tmp_path, hosts=hosts, services=services)
-    resp = await reg.get("service_restart").handler(ctx, ["api", "--host", "b"])
+    resp = await reg.get_router("service").get_subcommand("restart").handler(ctx, ["api", "--host", "b"])
     # Only host "b" got the call.
     assert pool.for_host("a").calls == []
     assert pool.for_host("b").calls == [["sh", "-c", "sudo systemctl restart api.service"]]
@@ -212,7 +215,7 @@ async def test_logs_uses_logs_action_template(tmp_path):
     hosts = {"a": HostSpec(address="a", user="u")}
     services = {"api": ServiceSpec(hosts=["a"], actions={"logs": "journalctl -u api -n 100"})}
     reg, ctx, pool, _ = _setup(tmp_path, hosts=hosts, services=services)
-    await reg.get("service_logs").handler(ctx, ["api", "--host", "a"])
+    await reg.get_router("service").get_subcommand("logs").handler(ctx, ["api", "--host", "a"])
     assert pool.for_host("a").calls == [["sh", "-c", "journalctl -u api -n 100"]]
 
 
@@ -223,7 +226,7 @@ def test_service_risk_split():
     pool = _FakePool({})
     reg = CommandRegistry()
     service_builtin.install(reg, ssh_pool=pool, audit=AuditLogger("/tmp/y"))  # noqa: S108
-    assert reg.get("service_list").effective_2fa is False
-    assert reg.get("service_status").effective_2fa is False
-    assert reg.get("service_restart").effective_2fa is True
-    assert reg.get("service_logs").effective_2fa is True
+    assert reg.get_router("service").get_subcommand("list").effective_2fa is False
+    assert reg.get_router("service").get_subcommand("status").effective_2fa is False
+    assert reg.get_router("service").get_subcommand("restart").effective_2fa is True
+    assert reg.get_router("service").get_subcommand("logs").effective_2fa is True
