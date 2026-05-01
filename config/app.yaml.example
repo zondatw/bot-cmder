@@ -57,7 +57,7 @@ kubectl:
   # Per-call output cap; longer kubectl output is truncated.
   max_output_bytes: 3500
 
-# Phase 2 — /runbook-list and /runbook-run.
+# Phase 2 — /runbook_list and /runbook_run.
 runbook:
   # Directory containing executable scripts. Treat as code: gitops
   # it, code-review additions; whoever can write here controls
@@ -95,8 +95,8 @@ hosts: {}
 #     user: deploy
 #     key_path: /etc/bot-cmder/keys/server-b.ed25519
 
-# Phase 3 — services with predefined actions. /service-status fans
-# out across hosts in parallel; /service-restart and /service-logs
+# Phase 3 — services with predefined actions. /service_status fans
+# out across hosts in parallel; /service_restart and /service_logs
 # require an explicit `--host <name>` argument.
 services: {}
 # services:

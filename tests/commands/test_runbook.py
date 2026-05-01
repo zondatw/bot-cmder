@@ -59,7 +59,7 @@ async def test_list_lists_only_executable_files(tmp_path: Path):
     assert os.access(hidden, os.X_OK)  # sanity
 
     reg = _install(FakeConnector())
-    h = reg.get("runbook-list").handler
+    h = reg.get("runbook_list").handler
     resp = await h(_ctx(tmp_path), [])
     assert "ok " in resp.text
     assert "no-x" not in resp.text
@@ -69,7 +69,7 @@ async def test_list_lists_only_executable_files(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_list_when_directory_missing(tmp_path: Path):
     reg = _install(FakeConnector())
-    h = reg.get("runbook-list").handler
+    h = reg.get("runbook_list").handler
     resp = await h(_ctx(tmp_path / "nonexistent"), [])
     assert "no runbooks" in resp.text
 
@@ -77,7 +77,7 @@ async def test_list_when_directory_missing(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_run_unknown_name(tmp_path: Path):
     reg = _install(FakeConnector())
-    h = reg.get("runbook-run").handler
+    h = reg.get("runbook_run").handler
     resp = await h(_ctx(tmp_path), ["ghost"])
     assert "unknown runbook" in resp.text
 
@@ -85,7 +85,7 @@ async def test_run_unknown_name(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_run_with_path_traversal_name_rejected(tmp_path: Path):
     reg = _install(FakeConnector())
-    h = reg.get("runbook-run").handler
+    h = reg.get("runbook_run").handler
     resp = await h(_ctx(tmp_path), ["../etc/passwd"])
     assert "unknown runbook" in resp.text
 
@@ -95,7 +95,7 @@ async def test_run_with_disallowed_arg_rejected(tmp_path: Path):
     _make_runbook(tmp_path, "ok.sh")
     fake = FakeConnector()
     reg = _install(fake)
-    h = reg.get("runbook-run").handler
+    h = reg.get("runbook_run").handler
     resp = await h(_ctx(tmp_path), ["ok", "; rm -rf /"])
     assert "refused" in resp.text
     assert fake.calls == []  # never reached the connector
@@ -106,7 +106,7 @@ async def test_run_invokes_connector_with_argv(tmp_path: Path):
     path = _make_runbook(tmp_path, "deploy.sh")
     fake = FakeConnector()
     reg = _install(fake)
-    h = reg.get("runbook-run").handler
+    h = reg.get("runbook_run").handler
     resp = await h(_ctx(tmp_path), ["deploy", "--env=stage", "v1.2.3"])
     assert fake.calls == [[str(path), "--env=stage", "v1.2.3"]]
     assert "exit=0" in resp.text
@@ -139,7 +139,7 @@ async def test_run_with_relative_config_dir_passes_absolute_path_to_subprocess(t
 
     fake = FakeConnector()
     reg = _install(fake)
-    await reg.get("runbook-run").handler(ctx, ["hello", "world"])
+    await reg.get("runbook_run").handler(ctx, ["hello", "world"])
 
     assert len(fake.calls) == 1
     [argv] = fake.calls
@@ -151,14 +151,14 @@ async def test_run_with_relative_config_dir_passes_absolute_path_to_subprocess(t
 @pytest.mark.asyncio
 async def test_run_no_args_shows_usage(tmp_path: Path):
     reg = _install(FakeConnector())
-    h = reg.get("runbook-run").handler
+    h = reg.get("runbook_run").handler
     resp = await h(_ctx(tmp_path), [])
     assert "usage" in resp.text
 
 
 def test_runbook_run_is_privileged():
     reg = _install(FakeConnector())
-    cmd_run = reg.get("runbook-run")
-    cmd_list = reg.get("runbook-list")
+    cmd_run = reg.get("runbook_run")
+    cmd_list = reg.get("runbook_list")
     assert cmd_run.effective_2fa is True
     assert cmd_list.effective_2fa is False

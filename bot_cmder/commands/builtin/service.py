@@ -1,13 +1,13 @@
-"""`/service-*` — predefined ops actions against ServiceSpec hosts.
+"""`/service_*` — predefined ops actions against ServiceSpec hosts.
 
 Four registered commands:
 
-  - /service-list                  (SAFE) — show every configured service
-  - /service-status <name>         (SAFE) — fan out the `status` action
+  - /service_list                  (SAFE) — show every configured service
+  - /service_status <name>         (SAFE) — fan out the `status` action
                                               to every host in parallel
-  - /service-restart <name> --host X  (PRIVILEGED) — TOTP-gated, single
+  - /service_restart <name> --host X  (PRIVILEGED) — TOTP-gated, single
                                                        host only
-  - /service-logs    <name> --host X  (PRIVILEGED) — TOTP-gated, single
+  - /service_logs    <name> --host X  (PRIVILEGED) — TOTP-gated, single
                                                        host only
 
 Why split into four registered commands instead of one /service with
@@ -16,10 +16,10 @@ read paths to skip the OTP gate while the write paths require it.
 The dispatcher already keys risk by command name, so distinct names
 is the natural fit.
 
-Why /service-restart and /service-logs require --host: an implicit
+Why /service_restart and /service_logs require --host: an implicit
 "do this everywhere at once" is the wrong default for a chat-driven
 SRE tool. The operator types the host they want; if they want to
-hit several hosts they type several /service-restart commands (and
+hit several hosts they type several /service_restart commands (and
 the audit log records each one).
 """
 
@@ -46,7 +46,7 @@ def install(
     audit: AuditLogger,
 ) -> None:
     @register(
-        "service-list",
+        "service_list",
         risk=Risk.SAFE,
         description="List configured services and their hosts",
         registry=registry,
@@ -65,7 +65,7 @@ def install(
         return OutgoingResponse.text_reply("\n".join(lines))
 
     @register(
-        "service-status",
+        "service_status",
         risk=Risk.SAFE,
         description="Run the service's `status` action across every host in parallel",
         registry=registry,
@@ -73,11 +73,11 @@ def install(
     )
     async def _status(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
         if len(args) != 1:
-            return OutgoingResponse.text_reply("usage: /service-status <name>")
+            return OutgoingResponse.text_reply("usage: /service_status <name>")
         return await _run_fan_out(ctx, args[0], action="status", ssh_pool=ssh_pool, audit=audit)
 
     @register(
-        "service-restart",
+        "service_restart",
         risk=Risk.PRIVILEGED,
         description="Run the service's `restart` action on ONE host (--host X)",
         registry=registry,
@@ -87,7 +87,7 @@ def install(
         return await _run_single_host(ctx, args, action="restart", ssh_pool=ssh_pool, audit=audit)
 
     @register(
-        "service-logs",
+        "service_logs",
         risk=Risk.PRIVILEGED,
         description="Run the service's `logs` action on ONE host (--host X)",
         registry=registry,

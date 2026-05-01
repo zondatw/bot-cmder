@@ -81,13 +81,13 @@ def test_create_app_registers_every_builtin():
         "health",
         # Phase 2
         "kubectl",
-        "runbook-list",
-        "runbook-run",
+        "runbook_list",
+        "runbook_run",
         "otp",
         # Phase 3
         "ssh",
-        "service-list",
-        "service-status",
-        "service-restart",
-        "service-logs",
+        "service_list",
+        "service_status",
+        "service_restart",
+        "service_logs",
     }

@@ -48,7 +48,7 @@ def install_ssh(
     ssh_pool: SshConnectorPool,
     audit: AuditLogger,
 ) -> None:
-    """Register /ssh + /service-* builtins. Requires an SshConnectorPool."""
+    """Register /ssh + /service_* builtins. Requires an SshConnectorPool."""
     ssh.install(registry, ssh_pool=ssh_pool, audit=audit)
     service.install(registry, ssh_pool=ssh_pool, audit=audit)
 
@@ -64,7 +64,7 @@ def install_all(
     """One-shot installer used by main.py.
 
     Always registers the safe + local-privileged commands. /otp lands
-    only when the TOTP triad is wired; /ssh and /service-* land only
+    only when the TOTP triad is wired; /ssh and /service_* land only
     when an SshConnectorPool is supplied.
     """
     install_safe(registry)

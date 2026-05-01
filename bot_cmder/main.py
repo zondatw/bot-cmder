@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -135,16 +136,38 @@ def create_app() -> FastAPI:
     return app
 
 
+_TELEGRAM_VALID_COMMAND_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+
 async def _sync_telegram_command_menu(client: TelegramClient, registry: CommandRegistry) -> None:
     """Push the registry into Telegram's slash-command autocomplete menu.
+
+    Telegram requires command names to match `^[a-z][a-z0-9_]{0,31}$`.
+    A single hyphenated name (`service-restart`) makes setMyCommands
+    reject the entire batch with HTTP 400 — there is no per-entry
+    partial accept. We filter locally so one bad name can't take the
+    whole menu down. Skipped names still work in chat (the dispatcher
+    doesn't apply this regex), they just don't autocomplete.
 
     Best-effort: a network/auth failure here is logged but never blocks
     the app from accepting webhooks.
     """
-    payload = [{"command": c.name, "description": (c.description or c.name)[:256]} for c in registry.all()]
+    accepted: list[dict[str, str]] = []
+    skipped: list[str] = []
+    for c in registry.all():
+        if _TELEGRAM_VALID_COMMAND_NAME.match(c.name):
+            accepted.append({"command": c.name, "description": (c.description or c.name)[:256]})
+        else:
+            skipped.append(c.name)
+    if skipped:
+        logger.warning(
+            "skipping %d command(s) from telegram menu (name violates ^[a-z][a-z0-9_]{0,31}$): %s",
+            len(skipped),
+            ", ".join(skipped),
+        )
     try:
-        await client.set_my_commands(payload)
-        logger.info("telegram command menu synced (%d entries)", len(payload))
+        await client.set_my_commands(accepted)
+        logger.info("telegram command menu synced (%d entries)", len(accepted))
     except Exception:
         logger.warning("failed to sync telegram command menu", exc_info=True)
 

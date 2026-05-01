@@ -1,4 +1,4 @@
-"""`/runbook-list` and `/runbook-run <name> [args...]`.
+"""`/runbook_list` and `/runbook_run <name> [args...]`.
 
 A runbook is any executable file in `runbook.dir` (config, default
 ./runbooks). The "name" is the filename without its extension —
@@ -56,7 +56,7 @@ def install(registry: CommandRegistry, *, connector: LocalConnector | None = Non
     local = connector or LocalConnector()
 
     @register(
-        "runbook-list",
+        "runbook_list",
         risk=Risk.SAFE,
         description="List available runbooks",
         registry=registry,
@@ -71,7 +71,7 @@ def install(registry: CommandRegistry, *, connector: LocalConnector | None = Non
         return OutgoingResponse.text_reply("\n".join(lines))
 
     @register(
-        "runbook-run",
+        "runbook_run",
         risk=Risk.PRIVILEGED,
         description="Run a runbook by name with optional args",
         registry=registry,
@@ -79,7 +79,7 @@ def install(registry: CommandRegistry, *, connector: LocalConnector | None = Non
     )
     async def _run(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
         if not args:
-            return OutgoingResponse.text_reply("usage: /runbook-run <name> [args...]")
+            return OutgoingResponse.text_reply("usage: /runbook_run <name> [args...]")
         name, *rest = args
         # Resolve the runbook dir to an absolute path BEFORE discovery
         # so the Path objects we later hand to subprocess are absolute
@@ -89,7 +89,7 @@ def install(registry: CommandRegistry, *, connector: LocalConnector | None = Non
         directory = Path(ctx.config.runbook.dir).resolve()
         path = _find_runbook(directory, name)
         if path is None:
-            return OutgoingResponse.text_reply(f"unknown runbook: {name} (try /runbook-list)")
+            return OutgoingResponse.text_reply(f"unknown runbook: {name} (try /runbook_list)")
         bad = [a for a in rest if not _ARG_RE.match(a)]
         if bad:
             return OutgoingResponse.text_reply(
