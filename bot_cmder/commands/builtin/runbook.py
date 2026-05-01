@@ -81,7 +81,13 @@ def install(registry: CommandRegistry, *, connector: LocalConnector | None = Non
         if not args:
             return OutgoingResponse.text_reply("usage: /runbook-run <name> [args...]")
         name, *rest = args
-        path = _find_runbook(Path(ctx.config.runbook.dir), name)
+        # Resolve the runbook dir to an absolute path BEFORE discovery
+        # so the Path objects we later hand to subprocess are absolute
+        # too. Without this, `cwd` chdir's into runbook dir and then
+        # asyncio.create_subprocess_exec can't find the (now relative)
+        # script at that location → "[Errno 2] No such file or directory".
+        directory = Path(ctx.config.runbook.dir).resolve()
+        path = _find_runbook(directory, name)
         if path is None:
             return OutgoingResponse.text_reply(f"unknown runbook: {name} (try /runbook-list)")
         bad = [a for a in rest if not _ARG_RE.match(a)]
@@ -91,7 +97,7 @@ def install(registry: CommandRegistry, *, connector: LocalConnector | None = Non
             )
         result = await local.execute(
             [str(path), *rest],
-            cwd=str(ctx.config.runbook.dir),
+            cwd=str(directory),
             max_output_bytes=ctx.config.runbook.max_output_bytes,
             timeout_s=120,
         )
