@@ -152,6 +152,10 @@ async def _sync_telegram_command_menu(client: TelegramClient, registry: CommandR
     Best-effort: a network/auth failure here is logged but never blocks
     the app from accepting webhooks.
     """
+    # Push one menu entry per top-level surface: each registered Command
+    # AND each Router. Subcommands (`service restart`) intentionally
+    # don't show up — they're discovered via `/<router> help` instead,
+    # which keeps the menu lean as the registry grows.
     accepted: list[dict[str, str]] = []
     skipped: list[str] = []
     for c in registry.all():
@@ -159,6 +163,13 @@ async def _sync_telegram_command_menu(client: TelegramClient, registry: CommandR
             accepted.append({"command": c.name, "description": (c.description or c.name)[:256]})
         else:
             skipped.append(c.name)
+    for r in registry.all_routers():
+        if _TELEGRAM_VALID_COMMAND_NAME.match(r.name):
+            sub_count = len(r.subcommand_names())
+            desc = f"{r.description} ({sub_count} subcommands — try /{r.name} help)"
+            accepted.append({"command": r.name, "description": desc[:256]})
+        else:
+            skipped.append(r.name)
     if skipped:
         logger.warning(
             "skipping %d command(s) from telegram menu (name violates ^[a-z][a-z0-9_]{0,31}$): %s",
