@@ -1,4 +1,4 @@
-"""`/runbook_list` and `/runbook_run <name> [args...]`.
+"""`/runbook <subcommand> [args...]`.
 
 A runbook is any executable file in `runbook.dir` (config, default
 ./runbooks). The "name" is the filename without its extension —
@@ -6,8 +6,10 @@ A runbook is any executable file in `runbook.dir` (config, default
 code: gitops it, code-review additions; whoever can write to it
 controls everything bot-cmder can do.
 
-Two distinct registered commands so the safe `list` action and the
-privileged `run` action have separate Risk levels.
+Registered as a Router with two subcommands so /runbook list (SAFE)
+and /runbook run (PRIVILEGED) keep their distinct Risk levels under
+a single chat command. Internal Command names stay `runbook_list`
+and `runbook_run` so existing ACL config and audit records work.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from bot_cmder.connectors.base import ExecResult
 from bot_cmder.connectors.local import LocalConnector
 from bot_cmder.core.context import CommandContext
 from bot_cmder.core.events import OutgoingResponse
-from bot_cmder.core.registry import CommandRegistry, Risk, register
+from bot_cmder.core.registry import CommandRegistry, Risk
 
 # A runbook name has to be a single safe filename stem — no slashes
 # (path traversal), no leading dots (hidden files), nothing weird.
@@ -54,12 +56,15 @@ def _find_runbook(directory: Path, name: str) -> Path | None:
 
 def install(registry: CommandRegistry, *, connector: LocalConnector | None = None) -> None:
     local = connector or LocalConnector()
+    router = registry.create_router(
+        "runbook",
+        description="List and run pre-deployed shell scripts in runbook.dir",
+    )
 
-    @register(
-        "runbook_list",
+    @router.subcommand(
+        "list",
         risk=Risk.SAFE,
         description="List available runbooks",
-        registry=registry,
     )
     async def _list(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
         scripts = _list_runbooks(Path(ctx.config.runbook.dir))
@@ -70,16 +75,15 @@ def install(registry: CommandRegistry, *, connector: LocalConnector | None = Non
             lines.append(f"  {s.stem.ljust(20)} ({s.name})")
         return OutgoingResponse.text_reply("\n".join(lines))
 
-    @register(
-        "runbook_run",
+    @router.subcommand(
+        "run",
         risk=Risk.PRIVILEGED,
         description="Run a runbook by name with optional args",
-        registry=registry,
         timeout_s=120,
     )
     async def _run(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
         if not args:
-            return OutgoingResponse.text_reply("usage: /runbook_run <name> [args...]")
+            return OutgoingResponse.text_reply("usage: /runbook run <name> [args...]")
         name, *rest = args
         # Resolve the runbook dir to an absolute path BEFORE discovery
         # so the Path objects we later hand to subprocess are absolute
@@ -89,7 +93,7 @@ def install(registry: CommandRegistry, *, connector: LocalConnector | None = Non
         directory = Path(ctx.config.runbook.dir).resolve()
         path = _find_runbook(directory, name)
         if path is None:
-            return OutgoingResponse.text_reply(f"unknown runbook: {name} (try /runbook_list)")
+            return OutgoingResponse.text_reply(f"unknown runbook: {name} (try /runbook list)")
         bad = [a for a in rest if not _ARG_RE.match(a)]
         if bad:
             return OutgoingResponse.text_reply(
