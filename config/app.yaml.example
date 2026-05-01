@@ -64,3 +64,45 @@ runbook:
   # everything bot-cmder can do.
   dir: ./runbooks
   max_output_bytes: 3500
+
+# Phase 3 — SSH connector tuning. Defaults are fine for daily use.
+ssh:
+  pool_ttl_s: 300         # reuse one SSH connection per host for 5 min
+  command_timeout_s: 30   # hard limit per remote command
+  max_output_bytes: 3500
+
+# Phase 3 — SSH-reachable hosts. Each key is the canonical name
+# /service and /ssh refer to. Strict known_hosts checking is
+# always on; if `known_hosts` is unset, asyncssh falls back to
+# the bot user's ~/.ssh/known_hosts.
+#
+# `allowed_commands` only governs the /ssh escape hatch: the joined
+# command string must fully-match at least one regex. /service-*
+# actions ignore it because the action templates ARE the allowlist.
+hosts: {}
+# hosts:
+#   server-a:
+#     address: 10.0.1.5
+#     user: deploy
+#     port: 22                                    # default 22
+#     key_path: /etc/bot-cmder/keys/server-a.ed25519
+#     # known_hosts: /etc/bot-cmder/known_hosts  # default ~/.ssh/known_hosts
+#     allowed_commands:
+#       - "^sudo systemctl (status|restart) (api|worker)\\.service$"
+#       - "^sudo journalctl -u (api|worker)\\.service .*$"
+#   server-b:
+#     address: 10.0.1.6
+#     user: deploy
+#     key_path: /etc/bot-cmder/keys/server-b.ed25519
+
+# Phase 3 — services with predefined actions. /service-status fans
+# out across hosts in parallel; /service-restart and /service-logs
+# require an explicit `--host <name>` argument.
+services: {}
+# services:
+#   api:
+#     hosts: [server-a, server-b]
+#     actions:
+#       status:  "sudo systemctl status api.service"
+#       restart: "sudo systemctl restart api.service"
+#       logs:    "sudo journalctl -u api.service -n 100 --no-pager"
