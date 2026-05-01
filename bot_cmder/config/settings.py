@@ -30,6 +30,13 @@ class Settings(BaseSettings):
 
     audit_path: Path | None = None
 
+    # Phase 2 — symmetric key used to encrypt TOTP secrets in the
+    # SQLite store at rest. 32 url-safe base64 bytes, generated once
+    # via `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`.
+    # Required when any privileged command exists; the dispatcher
+    # refuses to enable the OTP gate without it.
+    bot_cmder_master_key: str | None = None
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
