@@ -52,6 +52,15 @@ class TelegramClient:
             payload["parse_mode"] = parse_mode
         return await self._post("/sendMessage", payload)
 
+    async def set_my_commands(self, commands: list[dict[str, str]]) -> dict[str, Any]:
+        """Push the slash-command menu shown by Telegram clients.
+
+        `commands` is a list of `{"command": "<name>", "description": "<text>"}`.
+        Telegram replaces the previous list; pushing an empty list clears
+        it. Names must match `^[a-z0-9_]{1,32}$`; descriptions 1–256 chars.
+        """
+        return await self._post("/setMyCommands", {"commands": commands})
+
     async def answer_callback_query(self, callback_query_id: str, text: str | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {"callback_query_id": callback_query_id}
         if text is not None:

@@ -73,6 +73,7 @@ def create_app() -> FastAPI:
         logger.info("commands registered: %s", names)
         if telegram_client is not None:
             logger.info("telegram adapter mounted")
+            await _sync_telegram_command_menu(telegram_client, registry)
         else:
             logger.warning("TELEGRAM_TOKEN not set; telegram adapter disabled")
         try:
@@ -91,6 +92,20 @@ def create_app() -> FastAPI:
         app.include_router(telegram_router_obj)
 
     return app
+
+
+async def _sync_telegram_command_menu(client: TelegramClient, registry: CommandRegistry) -> None:
+    """Push the registry into Telegram's slash-command autocomplete menu.
+
+    Best-effort: a network/auth failure here is logged but never blocks
+    the app from accepting webhooks.
+    """
+    payload = [{"command": c.name, "description": (c.description or c.name)[:256]} for c in registry.all()]
+    try:
+        await client.set_my_commands(payload)
+        logger.info("telegram command menu synced (%d entries)", len(payload))
+    except Exception:
+        logger.warning("failed to sync telegram command menu", exc_info=True)
 
 
 app = create_app()
