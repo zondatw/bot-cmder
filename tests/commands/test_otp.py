@@ -154,3 +154,39 @@ async def test_valid_code_when_command_was_unregistered_after_stash(setup, app_c
     resp = await reg.get("otp").handler(_ctx(app_config), [pyotp.TOTP(secret).now()])
     assert "no longer registered" in resp.text
     assert _read_audit(audit_path)[0]["event"] == "OTP_COMMAND_GONE"
+
+
+async def test_valid_code_resumes_router_subcommand(setup, app_config, audit_path):
+    """Regression: /otp must resolve commands that live under a Router
+    (e.g. `service_restart` inside the `service` router) and not just
+    top-level Commands. Previously /otp called registry.get() which
+    only sees the top-level dict, so the OTP would validate but the
+    resume step printed "command no longer registered: /service_restart".
+    """
+    from bot_cmder.core.registry import Risk
+
+    reg, pending, _, _, _, secret = setup
+
+    router = reg.create_router("svc", description="x")
+    captured = {}
+
+    @router.subcommand("restart", risk=Risk.PRIVILEGED, description="restart")
+    async def _r(ctx, args):
+        captured["args"] = args
+        return OutgoingResponse.text_reply("router restarted")
+
+    # Dispatcher would stash under the synthetic name `svc_restart`.
+    pending.stash(
+        user_norm_id="telegram:111",
+        chat_id="42",
+        platform=Platform.TELEGRAM,
+        command_name="svc_restart",
+        args=["api"],
+    )
+    resp = await reg.get("otp").handler(_ctx(app_config), [pyotp.TOTP(secret).now()])
+    assert "router restarted" in resp.text
+    assert captured["args"] == ["api"]
+    audited = _read_audit(audit_path)[-1]
+    assert audited["event"] == "EXECUTED"
+    assert audited["command"] == "svc_restart"
+    assert audited["via_otp"] is True

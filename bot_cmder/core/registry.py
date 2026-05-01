@@ -165,6 +165,22 @@ class CommandRegistry:
             out.extend(r.all_subcommands())
         return out
 
+    def find_command(self, name: str) -> Command | None:
+        """Look up an executable Command by its registry name, whether
+        it's a top-level Command or a router subcommand stored under
+        the synthetic `<router>_<sub>` name. Used by /otp to resume
+        a pending privileged command — the dispatcher stashes
+        sessions under the synthetic name and we have to be able to
+        find the handler again from just the name."""
+        cmd = self._commands.get(name)
+        if cmd is not None:
+            return cmd
+        for r in self._routers.values():
+            for sub in r.all_subcommands():
+                if sub.name == name:
+                    return sub
+        return None
+
 
 REGISTRY = CommandRegistry()
 
