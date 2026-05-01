@@ -86,6 +86,60 @@ class RunbookConfig(BaseModel):
     max_output_bytes: int = 3500
 
 
+class HostSpec(_NullableDefaults):
+    """Phase 3 — one SSH-reachable target.
+
+    `address` may be a hostname or an IP. `user` is the remote login
+    account; the bot never uses passwords, only the key at `key_path`.
+
+    `known_hosts`: explicit path to a known_hosts file. When unset,
+    asyncssh falls back to `~/.ssh/known_hosts` for the bot's user.
+    Strict host key checking is always on — a missing entry is a
+    fatal connection error, not a TOFU prompt.
+
+    `allowed_commands` is a list of Python regex patterns. The /ssh
+    escape hatch refuses to run any command that doesn't match one
+    of these for the target host. /service actions bypass this list
+    because the action templates themselves are the allowlist.
+    """
+
+    address: str
+    user: str
+    port: int = 22
+    key_path: Path | None = None
+    known_hosts: Path | None = None
+    allowed_commands: list[str] = Field(default_factory=list)
+
+
+class ServiceSpec(_NullableDefaults):
+    """Phase 3 — a service with predefined actions across one or more hosts.
+
+    `hosts` references HostSpec keys in `AppConfig.hosts`. `actions`
+    maps an action name (`status` / `restart` / `logs` / ...) to the
+    literal shell command line that gets executed on the remote host.
+    Action commands are never templated with user input — they're the
+    same string for every invocation, which is why /service skips the
+    per-host `allowed_commands` regex check.
+    """
+
+    hosts: list[str] = Field(default_factory=list)
+    actions: dict[str, str] = Field(default_factory=dict)
+
+
+class SshConnectorConfig(BaseModel):
+    """Phase 3 SshConnector tuning."""
+
+    # Reuse one SSHClientConnection per host for this many seconds
+    # before tearing it down and reopening on the next call. Avoids
+    # a fresh handshake per command without holding a stale socket
+    # open forever.
+    pool_ttl_s: int = 300
+    # Per-call output cap; longer SSH output is truncated.
+    max_output_bytes: int = 3500
+    # Hard timeout on each individual remote command.
+    command_timeout_s: int = 30
+
+
 class AppConfig(_NullableDefaults):
     users: list[UserConfig] = Field(default_factory=list)
     acl: ACLConfig = Field(default_factory=ACLConfig)
@@ -94,6 +148,10 @@ class AppConfig(_NullableDefaults):
     totp: TOTPConfig = Field(default_factory=TOTPConfig)
     kubectl: KubectlConfig = Field(default_factory=KubectlConfig)
     runbook: RunbookConfig = Field(default_factory=RunbookConfig)
+    # Phase 3 — SSH connector + /service / /ssh builtins
+    hosts: dict[str, HostSpec] = Field(default_factory=dict)
+    services: dict[str, ServiceSpec] = Field(default_factory=dict)
+    ssh: SshConnectorConfig = Field(default_factory=SshConnectorConfig)
 
     def role_members(self, role: str) -> set[str]:
         members: set[str] = set()
