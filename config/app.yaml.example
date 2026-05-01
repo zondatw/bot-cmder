@@ -1,0 +1,37 @@
+# bot-cmder application config.
+#
+# Secrets (Telegram token, webhook secret) live in `.env`. This file is
+# safe to commit. Copy to `config/app.yaml` and edit.
+#
+# `whoami` is the easiest way to discover the norm_id strings you need
+# below — run `/whoami` in your bot DM and copy the value it prints.
+
+users:
+  - id: zonda
+    aliases: ["telegram:111111111"]
+    role: sre
+
+  # - id: alice
+  #   aliases: ["telegram:222222222"]
+  #   role: viewer
+
+acl:
+  # Anyone in these roles can run any SAFE command that doesn't have its
+  # own command-specific override below.
+  default_allow_safe: ["role:sre", "role:viewer"]
+
+  # Per-command override. Keys are command names; values are allow rules
+  # (norm_ids or "role:<name>"). Privileged commands deny by default
+  # unless they appear here. Leave as `{}` if you have no overrides.
+  commands: {}
+  # commands:
+  #   restart: ["role:sre"]
+  #   kubectl: ["role:sre"]
+
+healthcheck:
+  targets:
+    - {name: api, url: https://api.example.com/healthz, expect_status: 200, timeout_s: 5}
+    # - {name: db, url: https://db.example.com/ping}
+
+audit:
+  path: ./var/audit.jsonl
