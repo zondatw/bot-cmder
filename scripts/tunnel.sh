@@ -75,6 +75,25 @@ else
     echo "WARNING: .env not found, skipping .env update" >&2
 fi
 
+# Wait for the tunnel to become reachable from this host before we
+# even try Telegram. The URL is announced as soon as the subdomain is
+# allocated, but the cloudflared <-> Cloudflare edge connection still
+# needs a beat to come up — until then nobody can reach it.
+echo ">>> waiting for tunnel to become reachable..."
+LOCAL_OK=0
+for _ in $(seq 1 30); do
+    HTTP_CODE=$(curl -sS -o /dev/null -m 3 -w "%{http_code}" "${URL}/healthz" 2>/dev/null || echo "000")
+    if [[ "$HTTP_CODE" != "000" && "$HTTP_CODE" != "530" ]]; then
+        echo ">>> tunnel reachable (HTTP ${HTTP_CODE} on /healthz)"
+        LOCAL_OK=1
+        break
+    fi
+    sleep 1
+done
+if [[ $LOCAL_OK -eq 0 ]]; then
+    echo "WARNING: tunnel still not reachable from this host after 30s." >&2
+fi
+
 # Register with Telegram. Use python to build the JSON payload (the
 # secret may contain shell-hostile characters) and to omit
 # secret_token entirely when it is unset (Telegram requires 1-256
@@ -90,12 +109,13 @@ print(json.dumps(payload))
 PY
 )
 
-# Retry loop — fresh trycloudflare subdomains take a few seconds to
-# propagate to public DNS, and Telegram's resolver typically lags
-# briefly behind ours. Six tries x 5s = 30s budget, which has been
-# enough in practice.
-echo ">>> registering webhook with Telegram (DNS may take a few seconds)..."
-ATTEMPTS=6
+# Telegram's DNS resolver typically lags ours by 30-90s for fresh
+# trycloudflare subdomains. 18 x 5s = 90s budget. If we still strike
+# out, leave the tunnel running and tell the user how to retry by
+# hand instead of tearing the whole session down.
+echo ">>> registering webhook with Telegram (Telegram-side DNS may take up to 90s)..."
+ATTEMPTS=18
+WEBHOOK_OK=0
 for attempt in $(seq 1 $ATTEMPTS); do
     RESP=$(curl -sS -X POST \
         "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
@@ -103,16 +123,20 @@ for attempt in $(seq 1 $ATTEMPTS); do
         -d "${PAYLOAD}")
     if echo "$RESP" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("ok") else 1)' 2>/dev/null; then
         echo ">>> Telegram says: ${RESP}"
+        WEBHOOK_OK=1
         break
-    fi
-    if [[ $attempt -eq $ATTEMPTS ]]; then
-        echo "ERROR: setWebhook failed after ${ATTEMPTS} attempts. Last response:" >&2
-        echo "$RESP" >&2
-        exit 1
     fi
     echo ">>> attempt ${attempt}/${ATTEMPTS} failed, retrying in 5s: ${RESP}"
     sleep 5
 done
+
+if [[ $WEBHOOK_OK -eq 0 ]]; then
+    echo >&2
+    echo "WARNING: setWebhook didn't succeed in 90s." >&2
+    echo "         Tunnel is still up — retry the registration by hand:" >&2
+    echo "             just set-telegram-bot-webhook" >&2
+    echo "         Or wait a minute and run that command again." >&2
+fi
 
 echo
 echo ">>> tunnel running. Ctrl-C to stop."
