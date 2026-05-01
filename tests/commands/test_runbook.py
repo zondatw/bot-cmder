@@ -113,6 +113,42 @@ async def test_run_invokes_connector_with_argv(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_run_with_relative_config_dir_passes_absolute_path_to_subprocess(tmp_path: Path, monkeypatch):
+    """Regression: hand `cwd=runbooks/` to subprocess together with a
+    relative `runbooks/hello.sh` argv and the kernel can't find the
+    script after chdir → '[Errno 2] No such file or directory'.
+
+    Fix: resolve the runbook directory to absolute before discovery
+    so the Path we ship as argv[0] is absolute too."""
+    monkeypatch.chdir(tmp_path)
+    rb_dir = tmp_path / "runbooks"
+    rb_dir.mkdir()
+    _make_runbook(rb_dir, "hello.sh")
+
+    # config.runbook.dir is a *relative* Path here, mimicking the
+    # default `./runbooks` from app.yaml.
+    cfg = AppConfig(runbook=RunbookConfig(dir=Path("./runbooks")))
+    ctx = CommandContext(
+        user=PlatformUser(platform=Platform.TELEGRAM, raw_id="111"),
+        platform=Platform.TELEGRAM,
+        chat_id="42",
+        raw_event={},
+        config=cfg,
+        now=lambda: datetime.now(timezone.utc),
+    )
+
+    fake = FakeConnector()
+    reg = _install(fake)
+    await reg.get("runbook-run").handler(ctx, ["hello", "world"])
+
+    assert len(fake.calls) == 1
+    [argv] = fake.calls
+    assert Path(argv[0]).is_absolute(), f"argv[0] should be absolute, got {argv[0]!r}"
+    assert argv[0].endswith("/runbooks/hello.sh")
+    assert argv[1:] == ["world"]
+
+
+@pytest.mark.asyncio
 async def test_run_no_args_shows_usage(tmp_path: Path):
     reg = _install(FakeConnector())
     h = reg.get("runbook-run").handler
