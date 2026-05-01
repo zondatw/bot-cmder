@@ -82,7 +82,7 @@ fi
 echo ">>> waiting for tunnel to become reachable..."
 LOCAL_OK=0
 for _ in $(seq 1 30); do
-    HTTP_CODE=$(curl -sS -o /dev/null -m 3 -w "%{http_code}" "${URL}/healthz" 2>/dev/null || echo "000")
+    HTTP_CODE=$(curl -sS -o /dev/null -m 3 -w "%{http_code}" "${URL}/healthz" 2>/dev/null) || HTTP_CODE="000"
     if [[ "$HTTP_CODE" != "000" && "$HTTP_CODE" != "530" ]]; then
         echo ">>> tunnel reachable (HTTP ${HTTP_CODE} on /healthz)"
         LOCAL_OK=1

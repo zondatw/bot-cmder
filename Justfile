@@ -46,6 +46,16 @@ show-env-settings:
     @echo "TELEGRAM_HOOK_URL: ${TELEGRAM_HOOK_URL:-<unset>}"
     @echo "APP_CONFIG_PATH: ${APP_CONFIG_PATH:-./config/app.yaml}"
 
+# Show current Telegram webhook state — URL, pending update count,
+# last delivery error. Call this any time you suspect the webhook is
+# stale or queueing up (re-run after `just tunnel` to confirm).
+hook-status:
+    @python3 scripts/hook_status.py
+
+# Watch hook-status every 2s. Ctrl-C to stop.
+hook-watch:
+    watch -n 2 -t "just hook-status"
+
 # Register the webhook URL with Telegram. Optionally sets the secret token.
 set-telegram-bot-webhook:
     curl -fsSL -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
