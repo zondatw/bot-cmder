@@ -1,25 +1,23 @@
-"""`/service_*` — predefined ops actions against ServiceSpec hosts.
+"""`/service <subcommand> [args...]` — predefined ops against ServiceSpec hosts.
 
-Four registered commands:
+Registered as a Router so a single chat command groups four related
+operations. Each subcommand keeps its own Risk level (read paths SAFE,
+write paths PRIVILEGED) and its own ACL config key (`acl.commands.
+service_<sub>`); the dispatcher's router rewrite resolves
+`/service restart hello --host gce` to the underlying internal
+Command `service_restart` with args `["hello", "--host", "gce"]`
+before running ACL → OTP gate → handler → audit.
 
-  - /service_list                  (SAFE) — show every configured service
-  - /service_status <name>         (SAFE) — fan out the `status` action
-                                              to every host in parallel
-  - /service_restart <name> --host X  (PRIVILEGED) — TOTP-gated, single
-                                                       host only
-  - /service_logs    <name> --host X  (PRIVILEGED) — TOTP-gated, single
-                                                       host only
+  /service list                       (SAFE) show every service
+  /service status   <name>            (SAFE) fan-out status across hosts
+  /service info     <name>            (SAFE) show one service's actions
+  /service restart  <name> --host X   (PRIVILEGED) TOTP-gated, ONE host
+  /service logs     <name> --host X   (PRIVILEGED) TOTP-gated, ONE host
 
-Why split into four registered commands instead of one /service with
-subcommands: each `Command` carries one Risk level, and we want the
-read paths to skip the OTP gate while the write paths require it.
-The dispatcher already keys risk by command name, so distinct names
-is the natural fit.
-
-Why /service_restart and /service_logs require --host: an implicit
+Why /service restart and /service logs require --host: an implicit
 "do this everywhere at once" is the wrong default for a chat-driven
 SRE tool. The operator types the host they want; if they want to
-hit several hosts they type several /service_restart commands (and
+hit several hosts they type several /service restart commands (and
 the audit log records each one).
 """
 
@@ -31,7 +29,7 @@ from typing import TYPE_CHECKING
 from bot_cmder.connectors.base import ExecResult
 from bot_cmder.core.context import CommandContext
 from bot_cmder.core.events import OutgoingResponse
-from bot_cmder.core.registry import CommandRegistry, Risk, register
+from bot_cmder.core.registry import CommandRegistry, Risk
 
 if TYPE_CHECKING:
     from bot_cmder.audit.log import AuditLogger
@@ -45,11 +43,15 @@ def install(
     ssh_pool: SshConnectorPool,
     audit: AuditLogger,
 ) -> None:
-    @register(
-        "service_list",
+    router = registry.create_router(
+        "service",
+        description="Run predefined ops actions against configured services",
+    )
+
+    @router.subcommand(
+        "list",
         risk=Risk.SAFE,
         description="List configured services and their hosts",
-        registry=registry,
     )
     async def _list(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
         services = ctx.config.services
@@ -64,33 +66,54 @@ def install(
             lines.append(f"    actions: {actions}")
         return OutgoingResponse.text_reply("\n".join(lines))
 
-    @register(
-        "service_status",
+    @router.subcommand(
+        "info",
         risk=Risk.SAFE,
-        description="Run the service's `status` action across every host in parallel",
-        registry=registry,
+        description="Show one service in detail (hosts + action commands)",
+    )
+    async def _info(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
+        if len(args) != 1:
+            return OutgoingResponse.text_reply("usage: /service info <name>")
+        name = args[0]
+        spec = ctx.config.services.get(name)
+        if spec is None:
+            known = ", ".join(sorted(ctx.config.services)) or "<none>"
+            return OutgoingResponse.text_reply(f"unknown service: {name} (known: {known})")
+        lines = [f"Service: {name}"]
+        lines.append(f"  Hosts: {', '.join(spec.hosts) or '<none>'}")
+        if spec.actions:
+            lines.append("  Actions:")
+            name_w = max(len(a) for a in spec.actions)
+            for action_name, command in sorted(spec.actions.items()):
+                lines.append(f"    {action_name.ljust(name_w)}  {command}")
+        else:
+            lines.append("  Actions: <none>")
+        return OutgoingResponse.text_reply("\n".join(lines))
+
+    @router.subcommand(
+        "status",
+        risk=Risk.SAFE,
+        description="Run the `status` action across every host in parallel",
         timeout_s=60,
     )
     async def _status(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
         if len(args) != 1:
-            return OutgoingResponse.text_reply("usage: /service_status <name>")
+            return OutgoingResponse.text_reply("usage: /service status <name>")
         return await _run_fan_out(ctx, args[0], action="status", ssh_pool=ssh_pool, audit=audit)
 
-    @register(
-        "service_restart",
+    @router.subcommand(
+        "restart",
         risk=Risk.PRIVILEGED,
-        description="Run the service's `restart` action on ONE host (--host X)",
-        registry=registry,
+        description="Run the `restart` action on ONE host (--host X)",
         timeout_s=60,
     )
     async def _restart(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
         return await _run_single_host(ctx, args, action="restart", ssh_pool=ssh_pool, audit=audit)
 
-    @register(
-        "service_logs",
+    @router.subcommand(
+        "logs",
         risk=Risk.PRIVILEGED,
-        description="Run the service's `logs` action on ONE host (--host X)",
-        registry=registry,
+        description="Run the `logs` action on ONE host (--host X)",
         timeout_s=60,
     )
     async def _logs(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
@@ -181,7 +204,7 @@ async def _run_single_host(
 ) -> OutgoingResponse:
     positional, host = _parse_host_flag(args)
     if len(positional) != 1 or host is None:
-        return OutgoingResponse.text_reply(f"usage: /service_{action} <name> --host <host>")
+        return OutgoingResponse.text_reply(f"usage: /service {action} <name> --host <host>")
     service_name = positional[0]
 
     spec, action_cmd, err = _resolve_action(ctx, service_name, action)
