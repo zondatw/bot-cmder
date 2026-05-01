@@ -53,11 +53,47 @@ class AuditConfig(BaseModel):
     path: Path = Path("./var/audit.jsonl")
 
 
+class TOTPConfig(BaseModel):
+    """Phase 2 TOTP-gating settings."""
+
+    secret_store_path: Path = Path("./var/totp.sqlite")
+    # Lifetime of a "pending privileged command awaiting OTP" session.
+    # Telegram users get this many seconds to reply with `/otp <code>`
+    # before the session expires and they have to rerun the command.
+    session_ttl_s: int = 120
+
+
+class KubectlConfig(BaseModel):
+    """Phase 2 /kubectl builtin settings."""
+
+    # If unset, the kubectl process inherits the bot's KUBECONFIG /
+    # default ~/.kube/config. Override here to pin a specific file.
+    kubeconfig: Path | None = None
+    # Hard whitelist of subcommands the bot will exec. Anything else
+    # is rejected before reaching the subprocess. Order doesn't matter.
+    allowed_subcommands: list[str] = Field(
+        default_factory=lambda: ["get", "describe", "logs", "rollout", "scale", "top"]
+    )
+    # Per-call output cap; longer kubectl output is truncated with a
+    # `[...truncated N bytes]` marker.
+    max_output_bytes: int = 3500
+
+
+class RunbookConfig(BaseModel):
+    """Phase 2 /runbook-list and /runbook-run builtin settings."""
+
+    dir: Path = Path("./runbooks")
+    max_output_bytes: int = 3500
+
+
 class AppConfig(_NullableDefaults):
     users: list[UserConfig] = Field(default_factory=list)
     acl: ACLConfig = Field(default_factory=ACLConfig)
     healthcheck: HealthcheckConfig = Field(default_factory=HealthcheckConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
+    totp: TOTPConfig = Field(default_factory=TOTPConfig)
+    kubectl: KubectlConfig = Field(default_factory=KubectlConfig)
+    runbook: RunbookConfig = Field(default_factory=RunbookConfig)
 
     def role_members(self, role: str) -> set[str]:
         members: set[str] = set()

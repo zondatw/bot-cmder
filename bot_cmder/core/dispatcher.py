@@ -13,6 +13,7 @@ from bot_cmder.core.registry import Command, CommandRegistry
 
 if TYPE_CHECKING:
     from bot_cmder.audit.log import AuditLogger
+    from bot_cmder.auth.pending import PendingOTPSessions
     from bot_cmder.config.schema import AppConfig
 
 
@@ -25,7 +26,17 @@ class Dispatcher:
     config: AppConfig
     audit: AuditLogger
     acl_check: AclCheck
+    # Optional: when set, commands with effective_2fa=True are stashed
+    # here as a PendingOTPSession instead of being run inline; the
+    # /otp builtin pops the session and invokes the original handler
+    # after verifying the user's TOTP code.
+    pending: PendingOTPSessions | None = None
     now: Callable[[], datetime] = datetime.now
+
+    # Names of builtins that themselves drive the OTP flow and so
+    # must NEVER be gated by it (otherwise the gate becomes a soft
+    # lockout from which no /otp can rescue you).
+    _OTP_GATE_BYPASS: frozenset[str] = frozenset({"otp"})
 
     async def dispatch(self, msg: IncomingMessage) -> OutgoingResponse | None:
         parsed = parse(msg.text)
@@ -53,7 +64,30 @@ class Dispatcher:
             )
             return OutgoingResponse.text_reply("forbidden")
 
-        # Phase 2 will insert OTP gate here for cmd.effective_2fa.
+        # OTP gate: stash the command and ask the user to reply with
+        # /otp <code> before the handler actually runs. Disabled
+        # entirely if no PendingOTPSessions was injected (Phase 1
+        # behavior / tests without TOTP infra).
+        if cmd.effective_2fa and self.pending is not None and cmd.name not in self._OTP_GATE_BYPASS:
+            self.pending.stash(
+                user_norm_id=msg.user.norm_id,
+                chat_id=msg.chat_id,
+                platform=msg.platform,
+                command_name=cmd.name,
+                args=parsed.args,
+            )
+            self.audit.log(
+                event="OTP_REQUESTED",
+                user=msg.user.norm_id,
+                chat=msg.chat_id,
+                command=cmd.name,
+                args=parsed.args,
+                ttl_s=self.pending.ttl_s,
+            )
+            return OutgoingResponse.text_reply(
+                f"Privileged command. Reply with: /otp <6-digit-code> within {self.pending.ttl_s}s"
+            )
+
         ctx = CommandContext.from_message(msg, self.config, self.now)
 
         try:

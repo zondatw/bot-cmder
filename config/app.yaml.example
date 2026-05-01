@@ -35,3 +35,32 @@ healthcheck:
 
 audit:
   path: ./var/audit.jsonl
+
+# Phase 2 — TOTP gate for privileged commands.
+totp:
+  secret_store_path: ./var/totp.sqlite
+  # How long a privileged command waits for `/otp <code>` before the
+  # pending session is discarded.
+  session_ttl_s: 120
+
+# Phase 2 — /kubectl builtin.
+kubectl:
+  # Optional: pin a specific kubeconfig file. If unset, the bot
+  # process inherits KUBECONFIG / ~/.kube/config.
+  # kubeconfig: /home/bot/.kube/config
+
+  # Hard whitelist of subcommands the bot will exec. Add `exec`,
+  # `delete`, `apply` etc. at your own risk — these defaults are
+  # deliberately read-mostly + benign ops.
+  allowed_subcommands: [get, describe, logs, rollout, scale, top]
+
+  # Per-call output cap; longer kubectl output is truncated.
+  max_output_bytes: 3500
+
+# Phase 2 — /runbook-list and /runbook-run.
+runbook:
+  # Directory containing executable scripts. Treat as code: gitops
+  # it, code-review additions; whoever can write here controls
+  # everything bot-cmder can do.
+  dir: ./runbooks
+  max_output_bytes: 3500
