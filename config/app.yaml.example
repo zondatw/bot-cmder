@@ -22,10 +22,11 @@ acl:
 
   # Per-command override. Keys are command names; values are allow rules
   # (norm_ids or "role:<name>"). Privileged commands deny by default
-  # unless they appear here.
-  commands:
-    # restart: ["role:sre"]
-    # kubectl: ["role:sre"]
+  # unless they appear here. Leave as `{}` if you have no overrides.
+  commands: {}
+  # commands:
+  #   restart: ["role:sre"]
+  #   kubectl: ["role:sre"]
 
 healthcheck:
   targets:
