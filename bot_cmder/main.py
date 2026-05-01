@@ -87,7 +87,7 @@ def create_app() -> FastAPI:
             len(config.hosts),
             ", ".join(sorted(config.hosts)),
         )
-    install_all(registry, pending=pending, totp=totp, audit=audit, ssh_pool=ssh_pool)
+    install_all(registry, pending=pending, totp=totp, audit=audit, ssh_pool=ssh_pool, config=config)
 
     dispatcher = Dispatcher(
         registry=registry,

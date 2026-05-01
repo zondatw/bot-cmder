@@ -60,7 +60,7 @@ def test_create_app_registers_every_builtin():
     from bot_cmder.auth.secret_store import SecretStore
     from bot_cmder.auth.totp import TOTPVerifier
     from bot_cmder.commands.builtin import install_all
-    from bot_cmder.config.schema import SshConnectorConfig
+    from bot_cmder.config.schema import AppConfig, ServiceSpec, SshConnectorConfig
     from bot_cmder.connectors.ssh import SshConnectorPool
     from bot_cmder.core.registry import CommandRegistry
 
@@ -69,9 +69,20 @@ def test_create_app_registers_every_builtin():
     totp = TOTPVerifier(store)
     pending = PendingOTPSessions()
     pool = SshConnectorPool({}, SshConnectorConfig())
+    # /service action subcommands now derive from config; supply a
+    # service with the canonical actions so the expected executable
+    # set below stays deterministic.
+    config = AppConfig(
+        services={
+            "demo": ServiceSpec(
+                hosts=[],
+                actions={"status": "echo s", "restart": "echo r", "logs": "echo l"},
+            ),
+        },
+    )
 
     reg = CommandRegistry()
-    install_all(reg, pending=pending, totp=totp, audit=audit, ssh_pool=pool)
+    install_all(reg, pending=pending, totp=totp, audit=audit, ssh_pool=pool, config=config)
 
     # Top-level chat surface: every safe + privileged Command, plus
     # the routers (whose subcommands are nested, not top-level).

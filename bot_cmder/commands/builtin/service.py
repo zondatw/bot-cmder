@@ -1,40 +1,89 @@
 """`/service <subcommand> [args...]` — predefined ops against ServiceSpec hosts.
 
-Registered as a Router so a single chat command groups four related
-operations. Each subcommand keeps its own Risk level (read paths SAFE,
-write paths PRIVILEGED) and its own ACL config key (`acl.commands.
-service_<sub>`); the dispatcher's router rewrite resolves
-`/service restart hello --host gce` to the underlying internal
-Command `service_restart` with args `["hello", "--host", "gce"]`
-before running ACL → OTP gate → handler → audit.
+Subcommand registration is **dynamic**: at install() time we scan
+config.services for every action name across every service and
+auto-register a `/service <action>` subcommand for each. Adding a
+new action = a one-line yaml edit + a bot restart, no code change.
 
-  /service list                       (SAFE) show every service
-  /service status   <name>            (SAFE) fan-out status across hosts
-  /service info     <name>            (SAFE) show one service's actions
-  /service restart  <name> --host X   (PRIVILEGED) TOTP-gated, ONE host
-  /service logs     <name> --host X   (PRIVILEGED) TOTP-gated, ONE host
+Two metadata subcommands stay hardcoded because they aren't actions:
 
-Why /service restart and /service logs require --host: an implicit
-"do this everywhere at once" is the wrong default for a chat-driven
-SRE tool. The operator types the host they want; if they want to
-hit several hosts they type several /service restart commands (and
-the audit log records each one).
+  /service list           (SAFE) — list configured services
+  /service info <name>    (SAFE) — show one service's hosts + actions
+
+Each dynamically-registered action subcommand inherits its Risk +
+fan-out behavior from the action's *name*:
+
+  - Names in _SAFE_ACTION_NAMES (status / logs / sysinfo / df ...)
+    are SAFE and fan out across every host in parallel.
+  - Everything else is PRIVILEGED, requires TOTP, and refuses to
+    run without an explicit `--host X`. Conservative default:
+    "I don't know what `deploy` does, ask twice."
+
+ACL key + audit `command=` field stay as `service_<action>` so
+existing config and historical records keep working.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 from bot_cmder.connectors.base import ExecResult
 from bot_cmder.core.context import CommandContext
 from bot_cmder.core.events import OutgoingResponse
-from bot_cmder.core.registry import CommandRegistry, Risk
+from bot_cmder.core.registry import CommandRegistry, Risk, Router
 
 if TYPE_CHECKING:
     from bot_cmder.audit.log import AuditLogger
-    from bot_cmder.config.schema import ServiceSpec
+    from bot_cmder.config.schema import AppConfig, ServiceSpec
     from bot_cmder.connectors.ssh import SshConnectorPool
+
+logger = logging.getLogger(__name__)
+
+
+# Action names whose name suggests "read-only / cheap diagnostic" and
+# therefore default to Risk.SAFE + fan-out across all hosts. Anything
+# else is treated as PRIVILEGED + requires --host. Override per-action
+# risk would land via a richer ServiceSpec.actions schema later
+# (current schema is just `dict[str, str]`).
+_SAFE_ACTION_NAMES: frozenset[str] = frozenset(
+    {
+        "status",
+        "info",
+        "logs",
+        "log",
+        "health",
+        "check",
+        "show",
+        "inspect",
+        "sysinfo",
+        "uname",
+        "uptime",
+        "df",
+        "diskfree",
+        "diskusage",
+        "free",
+        "top",
+        "ps",
+        "ls",
+        "list",
+        "cat",
+        "tail",
+        "head",
+        "ping",
+        "tracepath",
+    }
+)
+
+# Names that the metadata subcommands already own. A user-defined
+# action with one of these names would silently shadow the metadata
+# command; we log a warning and skip registration instead.
+_RESERVED_SUBCOMMANDS: frozenset[str] = frozenset({"list", "info", "help"})
+
+
+def _classify(action_name: str) -> Risk:
+    return Risk.SAFE if action_name in _SAFE_ACTION_NAMES else Risk.PRIVILEGED
 
 
 def install(
@@ -42,6 +91,7 @@ def install(
     *,
     ssh_pool: SshConnectorPool,
     audit: AuditLogger,
+    config: AppConfig,
 ) -> None:
     router = registry.create_router(
         "service",
@@ -85,39 +135,57 @@ def install(
             lines.append("  Actions:")
             name_w = max(len(a) for a in spec.actions)
             for action_name, command in sorted(spec.actions.items()):
-                lines.append(f"    {action_name.ljust(name_w)}  {command}")
+                risk = _classify(action_name).value
+                lines.append(f"    {action_name.ljust(name_w)}  [{risk}]  {command}")
         else:
             lines.append("  Actions: <none>")
         return OutgoingResponse.text_reply("\n".join(lines))
 
-    @router.subcommand(
-        "status",
-        risk=Risk.SAFE,
-        description="Run the `status` action across every host in parallel",
-        timeout_s=60,
-    )
-    async def _status(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
-        if len(args) != 1:
-            return OutgoingResponse.text_reply("usage: /service status <name>")
-        return await _run_fan_out(ctx, args[0], action="status", ssh_pool=ssh_pool, audit=audit)
+    # Dynamic action subcommands. Collect the union of action names
+    # across every configured service so that a new yaml entry alone
+    # is enough to surface the corresponding /service <action>.
+    action_names: set[str] = set()
+    for spec in config.services.values():
+        action_names.update(spec.actions.keys())
 
-    @router.subcommand(
-        "restart",
-        risk=Risk.PRIVILEGED,
-        description="Run the `restart` action on ONE host (--host X)",
-        timeout_s=60,
-    )
-    async def _restart(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
-        return await _run_single_host(ctx, args, action="restart", ssh_pool=ssh_pool, audit=audit)
+    for action_name in sorted(action_names):
+        if action_name in _RESERVED_SUBCOMMANDS:
+            logger.warning(
+                "service action %r shadows the reserved /service %s subcommand; skipping registration. "
+                "Rename the action in config.services to expose it on chat.",
+                action_name,
+                action_name,
+            )
+            continue
+        _register_action_subcommand(
+            router=router,
+            action_name=action_name,
+            risk=_classify(action_name),
+            ssh_pool=ssh_pool,
+            audit=audit,
+        )
 
-    @router.subcommand(
-        "logs",
-        risk=Risk.PRIVILEGED,
-        description="Run the `logs` action on ONE host (--host X)",
-        timeout_s=60,
-    )
-    async def _logs(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
-        return await _run_single_host(ctx, args, action="logs", ssh_pool=ssh_pool, audit=audit)
+
+def _register_action_subcommand(
+    *,
+    router: Router,
+    action_name: str,
+    risk: Risk,
+    ssh_pool: SshConnectorPool,
+    audit: AuditLogger,
+) -> None:
+    if risk == Risk.SAFE:
+        description = f"Run the `{action_name}` action across every host in parallel"
+    else:
+        description = f"Run the `{action_name}` action on ONE host (--host X)"
+
+    @router.subcommand(action_name, risk=risk, description=description, timeout_s=60)
+    async def _handler(ctx: CommandContext, args: list[str]) -> OutgoingResponse:
+        if risk == Risk.SAFE:
+            if len(args) != 1:
+                return OutgoingResponse.text_reply(f"usage: /service {action_name} <name>")
+            return await _run_fan_out(ctx, args[0], action=action_name, ssh_pool=ssh_pool, audit=audit)
+        return await _run_single_host(ctx, args, action=action_name, ssh_pool=ssh_pool, audit=audit)
 
 
 # --- helpers ------------------------------------------------------------

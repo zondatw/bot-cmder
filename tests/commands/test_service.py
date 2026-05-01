@@ -63,7 +63,7 @@ def _setup(
         now=lambda: datetime.now(timezone.utc),
     )
     reg = CommandRegistry()
-    service_builtin.install(reg, ssh_pool=pool, audit=audit)
+    service_builtin.install(reg, ssh_pool=pool, audit=audit, config=cfg)
     return reg, ctx, pool, audit_path
 
 
@@ -140,17 +140,29 @@ async def test_status_includes_first_failure_stderr_inline(tmp_path):
 
 @pytest.mark.asyncio
 async def test_status_unknown_service(tmp_path):
-    reg, ctx, *_ = _setup(tmp_path, hosts={}, services={})
+    # `status` subcommand only registers if at least one service has a
+    # `status` action — otherwise dynamic dispatch wouldn't surface it.
+    reg, ctx, *_ = _setup(
+        tmp_path,
+        hosts={},
+        services={"placeholder": ServiceSpec(hosts=[], actions={"status": "echo s"})},
+    )
     resp = await reg.get_router("service").get_subcommand("status").handler(ctx, ["ghost"])
     assert "unknown service" in resp.text
 
 
 @pytest.mark.asyncio
 async def test_status_service_without_status_action(tmp_path):
+    """The `api` service doesn't define a `status` action, but some
+    OTHER service does (so the subcommand is registered). Calling
+    /service status api should report the missing action, not crash."""
     reg, ctx, *_ = _setup(
         tmp_path,
         hosts={"a": HostSpec(address="a", user="u")},
-        services={"api": ServiceSpec(hosts=["a"], actions={"restart": "R"})},
+        services={
+            "api": ServiceSpec(hosts=["a"], actions={"restart": "R"}),
+            "other": ServiceSpec(hosts=["a"], actions={"status": "echo s"}),
+        },
     )
     resp = await reg.get_router("service").get_subcommand("status").handler(ctx, ["api"])
     assert "no 'status' action" in resp.text
@@ -212,24 +224,80 @@ async def test_restart_runs_action_on_named_host_and_audits(tmp_path):
 
 @pytest.mark.asyncio
 async def test_logs_uses_logs_action_template(tmp_path):
+    """`logs` is in _SAFE_ACTION_NAMES so it's auto-classified SAFE
+    and fans out across all hosts (no --host needed). The action's
+    shell template is run verbatim on each host."""
     hosts = {"a": HostSpec(address="a", user="u")}
     services = {"api": ServiceSpec(hosts=["a"], actions={"logs": "journalctl -u api -n 100"})}
     reg, ctx, pool, _ = _setup(tmp_path, hosts=hosts, services=services)
-    await reg.get_router("service").get_subcommand("logs").handler(ctx, ["api", "--host", "a"])
+    await reg.get_router("service").get_subcommand("logs").handler(ctx, ["api"])
     assert pool.for_host("a").calls == [["sh", "-c", "journalctl -u api -n 100"]]
 
 
 # --- risk levels --------------------------------------------------------
 
 
-def test_service_risk_split():
+def test_service_risk_split(tmp_path):
+    """Risk classification of dynamically-registered action subcommands
+    flows from _SAFE_ACTION_NAMES: read-shaped names (status / logs /
+    sysinfo / ...) are SAFE; everything else is PRIVILEGED, so a yaml
+    typo or a creative new action like `deploy` defaults to "ask twice"."""
+    from bot_cmder.config.schema import AppConfig, ServiceSpec, SshConnectorConfig
+
     pool = _FakePool({})
+    cfg = AppConfig(
+        services={
+            "api": ServiceSpec(
+                hosts=[],
+                actions={
+                    "status": "echo s",
+                    "logs": "echo l",
+                    "sysinfo": "uname -a",
+                    "restart": "echo r",
+                    "deploy": "echo d",
+                },
+            )
+        },
+        ssh=SshConnectorConfig(),
+    )
     reg = CommandRegistry()
-    service_builtin.install(reg, ssh_pool=pool, audit=AuditLogger("/tmp/y"))  # noqa: S108
-    assert reg.get_router("service").get_subcommand("list").effective_2fa is False
-    assert reg.get_router("service").get_subcommand("status").effective_2fa is False
-    assert reg.get_router("service").get_subcommand("restart").effective_2fa is True
-    assert reg.get_router("service").get_subcommand("logs").effective_2fa is True
+    service_builtin.install(reg, ssh_pool=pool, audit=AuditLogger(tmp_path / "y.jsonl"), config=cfg)
+
+    router = reg.get_router("service")
+    # Metadata subcommands stay SAFE.
+    assert router.get_subcommand("list").effective_2fa is False
+    assert router.get_subcommand("info").effective_2fa is False
+    # Read-shaped action names → SAFE.
+    assert router.get_subcommand("status").effective_2fa is False
+    assert router.get_subcommand("logs").effective_2fa is False
+    assert router.get_subcommand("sysinfo").effective_2fa is False
+    # Everything else → PRIVILEGED + TOTP.
+    assert router.get_subcommand("restart").effective_2fa is True
+    assert router.get_subcommand("deploy").effective_2fa is True
+
+
+def test_action_named_list_or_info_is_skipped_with_warning(tmp_path, caplog):
+    """A user-defined action with a name that shadows a metadata
+    subcommand (list / info / help) must not silently overwrite it.
+    Skip + log a warning so the operator notices and renames."""
+    import logging
+
+    from bot_cmder.commands.builtin import service as service_module
+    from bot_cmder.config.schema import AppConfig, ServiceSpec, SshConnectorConfig
+
+    pool = _FakePool({})
+    cfg = AppConfig(
+        services={"api": ServiceSpec(hosts=[], actions={"list": "echo collision", "ok": "echo ok"})},
+        ssh=SshConnectorConfig(),
+    )
+    reg = CommandRegistry()
+    with caplog.at_level(logging.WARNING, logger=service_module.logger.name):
+        service_builtin.install(reg, ssh_pool=pool, audit=AuditLogger(tmp_path / "y.jsonl"), config=cfg)
+
+    router = reg.get_router("service")
+    assert router.get_subcommand("ok") is not None  # the non-shadowing action still landed
+    assert "shadows the reserved" in caplog.text
+    assert "list" in caplog.text
 
 
 # --- /service info -------------------------------------------------------
@@ -271,8 +339,10 @@ async def test_info_shows_hosts_and_action_command_strings(tmp_path):
     assert "sudo systemctl restart api.service" in resp.text
 
 
-def test_info_is_safe():
+def test_info_is_safe(tmp_path):
+    from bot_cmder.config.schema import AppConfig
+
     pool = _FakePool({})
     reg = CommandRegistry()
-    service_builtin.install(reg, ssh_pool=pool, audit=AuditLogger("/tmp/_z.jsonl"))  # noqa: S108
+    service_builtin.install(reg, ssh_pool=pool, audit=AuditLogger(tmp_path / "z.jsonl"), config=AppConfig())
     assert reg.get_router("service").get_subcommand("info").effective_2fa is False

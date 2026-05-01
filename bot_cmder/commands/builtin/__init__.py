@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from bot_cmder.audit.log import AuditLogger
     from bot_cmder.auth.pending import PendingOTPSessions
     from bot_cmder.auth.totp import TOTPVerifier
+    from bot_cmder.config.schema import AppConfig
     from bot_cmder.connectors.ssh import SshConnectorPool
 
 
@@ -47,10 +48,16 @@ def install_ssh(
     *,
     ssh_pool: SshConnectorPool,
     audit: AuditLogger,
+    config: AppConfig,
 ) -> None:
-    """Register /ssh + /service * builtins. Requires an SshConnectorPool."""
+    """Register /ssh + /service * builtins. Requires an SshConnectorPool.
+
+    `config` is needed so service.install() can scan config.services
+    for the union of action names and dynamically register a
+    /service <action> subcommand for each.
+    """
     ssh.install(registry, ssh_pool=ssh_pool, audit=audit)
-    service.install(registry, ssh_pool=ssh_pool, audit=audit)
+    service.install(registry, ssh_pool=ssh_pool, audit=audit, config=config)
 
 
 def install_all(
@@ -60,16 +67,18 @@ def install_all(
     totp: TOTPVerifier | None = None,
     audit: AuditLogger | None = None,
     ssh_pool: SshConnectorPool | None = None,
+    config: AppConfig | None = None,
 ) -> None:
     """One-shot installer used by main.py.
 
     Always registers the safe + local-privileged commands. /otp lands
     only when the TOTP triad is wired; /ssh and /service * land only
-    when an SshConnectorPool is supplied.
+    when both an SshConnectorPool and an AppConfig are supplied
+    (config drives the dynamic /service action subcommands).
     """
     install_safe(registry)
     install_privileged(registry)
     if pending is not None and totp is not None and audit is not None:
         install_otp(registry, pending=pending, totp=totp, audit=audit)
-    if ssh_pool is not None and audit is not None:
-        install_ssh(registry, ssh_pool=ssh_pool, audit=audit)
+    if ssh_pool is not None and audit is not None and config is not None:
+        install_ssh(registry, ssh_pool=ssh_pool, audit=audit, config=config)
