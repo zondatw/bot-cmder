@@ -50,7 +50,7 @@ audit:
 uv run python server.py
 ```
 
-Local dev binds `127.0.0.1:8000` by default. Override with `BIND_HOST`, `BIND_PORT`, or `RELOAD=1` for autoreload.
+Local dev binds `127.0.0.1:47823` by default (intentionally uncommon to avoid clashing with other services on 8000 / 8080). Override with `BIND_HOST`, `BIND_PORT`, or `RELOAD=1` for autoreload.
 
 ## Justfile shortcuts
 
