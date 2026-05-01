@@ -230,3 +230,49 @@ def test_service_risk_split():
     assert reg.get_router("service").get_subcommand("status").effective_2fa is False
     assert reg.get_router("service").get_subcommand("restart").effective_2fa is True
     assert reg.get_router("service").get_subcommand("logs").effective_2fa is True
+
+
+# --- /service info -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_info_unknown_service(tmp_path):
+    reg, ctx, *_ = _setup(tmp_path, hosts={}, services={})
+    resp = await reg.get_router("service").get_subcommand("info").handler(ctx, ["ghost"])
+    assert "unknown service" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_info_usage_when_args_missing(tmp_path):
+    reg, ctx, *_ = _setup(tmp_path, hosts={}, services={})
+    resp = await reg.get_router("service").get_subcommand("info").handler(ctx, [])
+    assert "usage" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_info_shows_hosts_and_action_command_strings(tmp_path):
+    """The whole point of /service info is letting an operator verify
+    what /service restart will run BEFORE they OTP. So the actual
+    shell command for each action MUST appear in the reply."""
+    services = {
+        "api": ServiceSpec(
+            hosts=["server-a", "server-b"],
+            actions={
+                "status": "sudo systemctl status api.service",
+                "restart": "sudo systemctl restart api.service",
+            },
+        )
+    }
+    reg, ctx, *_ = _setup(tmp_path, hosts={"server-a": HostSpec(address="x", user="u")}, services=services)
+    resp = await reg.get_router("service").get_subcommand("info").handler(ctx, ["api"])
+    assert "Service: api" in resp.text
+    assert "server-a" in resp.text and "server-b" in resp.text
+    assert "sudo systemctl status api.service" in resp.text
+    assert "sudo systemctl restart api.service" in resp.text
+
+
+def test_info_is_safe():
+    pool = _FakePool({})
+    reg = CommandRegistry()
+    service_builtin.install(reg, ssh_pool=pool, audit=AuditLogger("/tmp/_z.jsonl"))  # noqa: S108
+    assert reg.get_router("service").get_subcommand("info").effective_2fa is False
