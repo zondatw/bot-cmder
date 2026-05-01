@@ -181,7 +181,7 @@ async def _run_single_host(
 ) -> OutgoingResponse:
     positional, host = _parse_host_flag(args)
     if len(positional) != 1 or host is None:
-        return OutgoingResponse.text_reply(f"usage: /service-{action} <name> --host <host>")
+        return OutgoingResponse.text_reply(f"usage: /service_{action} <name> --host <host>")
     service_name = positional[0]
 
     spec, action_cmd, err = _resolve_action(ctx, service_name, action)

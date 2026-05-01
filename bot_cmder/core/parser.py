@@ -19,6 +19,7 @@ def parse(text: str) -> ParsedCommand | None:
     text = text.strip()
     if not text or not text.startswith("/"):
         return None
+    text = _normalize_smart_dashes(text)
     try:
         tokens = shlex.split(text)
     except ValueError:
@@ -31,3 +32,16 @@ def parse(text: str) -> ParsedCommand | None:
     if not head:
         return None
     return ParsedCommand(name=head, args=tokens[1:])
+
+
+def _normalize_smart_dashes(text: str) -> str:
+    """Reverse iOS/macOS "Smart Dashes" autocorrect on flag arguments.
+
+    Apple platforms substitute the literal `--` a user types into a single
+    em-dash (U+2014); en-dash (U+2013) and the horizontal bar (U+2015)
+    show up in the wild too. Without this normalization, a phone user
+    typing `/service_restart hello --host gce` ends up sending
+    `/service_restart hello —host gce` and the `--host` flag silently
+    disappears.
+    """
+    return text.replace("—", "--").replace("―", "--").replace("–", "-")

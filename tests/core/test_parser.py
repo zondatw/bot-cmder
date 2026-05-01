@@ -51,3 +51,26 @@ def test_strips_leading_trailing_whitespace():
     p = parse("  /ping  ")
     assert p is not None
     assert p.name == "ping"
+
+
+def test_em_dash_autocorrect_is_normalized_back_to_double_hyphen():
+    """Regression: iOS/macOS Smart Dashes turn the user-typed `--`
+    into U+2014 em-dash, which makes `--host` arrive as `—host` and
+    silently breaks every flag-taking command. parser must normalize
+    em-dash and friends back to ASCII before shlex split."""
+    p = parse("/service_restart hello —host gce")
+    assert p is not None
+    assert p.name == "service_restart"
+    assert p.args == ["hello", "--host", "gce"]
+
+
+def test_horizontal_bar_normalized_too():
+    p = parse("/cmd ―flag value")
+    assert p is not None
+    assert p.args == ["--flag", "value"]
+
+
+def test_en_dash_normalized_to_single_hyphen():
+    p = parse("/cmd –short")
+    assert p is not None
+    assert p.args == ["-short"]

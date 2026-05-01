@@ -166,6 +166,11 @@ async def test_restart_requires_explicit_host_flag(tmp_path):
     reg, ctx, *_ = _setup(tmp_path, hosts=hosts, services=services)
     resp = await reg.get("service_restart").handler(ctx, ["api"])
     assert "usage" in resp.text and "--host" in resp.text
+    # Regression: usage string must reference the underscore name,
+    # not the legacy hyphenated one (an f-string `/service-{action}`
+    # got missed in the rename sweep).
+    assert "/service_restart" in resp.text
+    assert "/service-restart" not in resp.text
 
 
 @pytest.mark.asyncio
