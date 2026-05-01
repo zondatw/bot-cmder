@@ -57,11 +57,17 @@ Local dev binds `127.0.0.1:47823` by default (intentionally uncommon to avoid cl
 ```shell
 just                                  # list tasks
 just dev                              # uvicorn with reload
+just tunnel                           # cloudflared quick tunnel + auto-update .env + register webhook
 just test                             # pytest
 just lint                             # ruff + black --check
 just show-env-settings                # echo env vars
-just set-telegram-bot-webhook         # POST setWebhook to Telegram
+just set-telegram-bot-webhook         # POST setWebhook to Telegram (manual; tunnel does this for you)
 ```
+
+Typical local dev loop: one terminal `just dev`, another `just tunnel`. The
+tunnel recipe re-registers the webhook every time you re-run it, so when
+cloudflared issues a new random subdomain you don't have to copy-paste
+URLs by hand.
 
 ## Tests
 

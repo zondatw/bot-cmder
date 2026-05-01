@@ -14,6 +14,12 @@ install:
 dev:
     RELOAD=1 uv run python server.py
 
+# Bring up a cloudflared quick tunnel, write its URL into .env as
+# TELEGRAM_HOOK_URL, register the webhook with Telegram, then keep
+# the tunnel running. Re-run after every cloudflared restart.
+tunnel:
+    bash scripts/tunnel.sh
+
 # Run the test suite.
 test *args:
     uv run pytest "$@"
