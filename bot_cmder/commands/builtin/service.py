@@ -320,19 +320,56 @@ def _short_status(r: ExecResult | str) -> str:
 
 
 def _format_fanout(service_name: str, action: str, results: list[tuple[str, ExecResult | str]]) -> str:
+    """Render a fan-out result: status table + per-host stdout/stderr.
+
+    The status line alone is right for `/service status` (where the
+    answer IS pass/fail), but for read actions like `/service sysinfo`
+    or `/service df` the WHOLE point is the output. Always show stdout
+    (and stderr on non-zero exit), trimmed per host so 5 hosts ×
+    `journalctl -n 100` doesn't blow Telegram's 4096-char message cap.
+    """
     name_w = max((len(h) for h, _ in results), default=4)
     lines = [f"{service_name} {action}:"]
     for host, r in results:
         lines.append(f"  {host.ljust(name_w)}  {_short_status(r)}")
-    # Append details from the first non-OK result if any, so failures
-    # don't require a follow-up command to investigate.
+
     for host, r in results:
-        if isinstance(r, ExecResult) and r.exit_code != 0:
-            lines.append("")
-            lines.append(f"--- {host}: stderr ---")
-            lines.append(r.stderr.rstrip() or "(empty)")
-            break
+        if isinstance(r, str):
+            # Pre-exec failure (e.g. unknown host); short_status above
+            # already explained it, no extra body to print.
+            continue
+        out_block = _trim_for_fanout(r.stdout)
+        err_block = _trim_for_fanout(r.stderr) if r.exit_code != 0 else ""
+        if not out_block and not err_block:
+            continue
+        lines.append("")
+        lines.append(f"--- {host} ---")
+        if out_block:
+            lines.append(out_block)
+        if err_block:
+            if out_block:
+                lines.append("")
+            lines.append(f"(stderr) {err_block}")
     return "\n".join(lines)
+
+
+def _trim_for_fanout(text: str, *, max_lines: int = 8, max_chars: int = 600) -> str:
+    """Cap a per-host stdout/stderr block so the combined fan-out reply
+    stays under Telegram's 4096-char message limit even with several
+    hosts. Returns empty string when the input has no real content."""
+    text = text.rstrip()
+    if not text:
+        return ""
+    src_lines = text.splitlines()
+    visible = src_lines[:max_lines]
+    out = "\n".join(visible)
+    truncated_chars = False
+    if len(out) > max_chars:
+        out = out[:max_chars]
+        truncated_chars = True
+    if truncated_chars or len(src_lines) > max_lines:
+        out += "\n[...truncated]"
+    return out
 
 
 def _format_single(service_name: str, action: str, host: str, cmd: str, r: ExecResult) -> str:

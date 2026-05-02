@@ -139,6 +139,46 @@ async def test_status_includes_first_failure_stderr_inline(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_fanout_shows_stdout_for_each_host_on_success(tmp_path):
+    """Regression: `/service sysinfo hello` showed only `gce  OK (1248ms)`
+    with no actual `Darwin`/`Linux` body. For SAFE actions where the
+    output IS the answer (sysinfo, df, top, ...) every host's stdout
+    must appear in the reply, not just the status line."""
+    hosts = {"a": HostSpec(address="a", user="u"), "b": HostSpec(address="b", user="u")}
+    services = {"box": ServiceSpec(hosts=["a", "b"], actions={"sysinfo": "uname"})}
+    canned = {
+        "a": ExecResult(0, "Darwin\n", "", 12, "ssh:a"),
+        "b": ExecResult(0, "Linux\n", "", 9, "ssh:b"),
+    }
+    reg, ctx, _, _ = _setup(tmp_path, hosts=hosts, services=services, canned_per_host=canned)
+    resp = await reg.get_router("service").get_subcommand("sysinfo").handler(ctx, ["box"])
+    # Status table still there
+    assert "a  OK" in resp.text and "b  OK" in resp.text
+    # And each host's stdout present, attributed.
+    assert "--- a ---" in resp.text and "Darwin" in resp.text
+    assert "--- b ---" in resp.text and "Linux" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_fanout_truncates_long_per_host_output(tmp_path):
+    """Per-host stdout is capped (lines + chars) so a fan-out across
+    several hosts of `journalctl -n 1000` doesn't blow Telegram's
+    4096-char message limit. Truncation marker must appear so the
+    operator knows there's more."""
+    big = "\n".join(f"line {i}" for i in range(50))
+    hosts = {"a": HostSpec(address="a", user="u")}
+    services = {"box": ServiceSpec(hosts=["a"], actions={"logs": "journalctl"})}
+    canned = {"a": ExecResult(0, big, "", 50, "ssh:a")}
+    reg, ctx, _, _ = _setup(tmp_path, hosts=hosts, services=services, canned_per_host=canned)
+    resp = await reg.get_router("service").get_subcommand("logs").handler(ctx, ["box"])
+    assert "[...truncated]" in resp.text
+    # First few lines visible.
+    assert "line 0" in resp.text
+    # Tail not visible.
+    assert "line 49" not in resp.text
+
+
+@pytest.mark.asyncio
 async def test_status_unknown_service(tmp_path):
     # `status` subcommand only registers if at least one service has a
     # `status` action — otherwise dynamic dispatch wouldn't surface it.
