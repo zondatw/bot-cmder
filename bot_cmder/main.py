@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from bot_cmder.adapters.discord import DiscordAdapter, DiscordClient
+from bot_cmder.adapters.discord import make_router as discord_router
 from bot_cmder.adapters.telegram import TelegramAdapter, TelegramClient
 from bot_cmder.adapters.telegram import make_router as telegram_router
 from bot_cmder.audit.log import AuditLogger
@@ -108,6 +110,24 @@ def create_app() -> FastAPI:
             webhook_secret=settings.telegram_webhook_secret,
         )
 
+    discord_client: DiscordClient | None = None
+    discord_router_obj = None
+    if settings.discord_public_key and settings.discord_bot_token and settings.discord_application_id:
+        discord_client = DiscordClient(
+            bot_token=settings.discord_bot_token,
+            application_id=settings.discord_application_id,
+        )
+        discord_adapter = DiscordAdapter(discord_client)
+        try:
+            discord_router_obj = discord_router(
+                discord_adapter,
+                dispatcher,
+                public_key_hex=settings.discord_public_key,
+            )
+        except ValueError:
+            logger.exception("DISCORD_PUBLIC_KEY invalid; discord adapter disabled")
+            discord_router_obj = None
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         names = ", ".join(c.name for c in registry.all())
@@ -117,11 +137,19 @@ def create_app() -> FastAPI:
             await _sync_telegram_command_menu(telegram_client, registry)
         else:
             logger.warning("TELEGRAM_TOKEN not set; telegram adapter disabled")
+        if discord_router_obj is not None:
+            logger.info("discord adapter mounted (slash commands push via scripts/register_discord_commands.py)")
+        else:
+            logger.warning(
+                "discord adapter disabled (need DISCORD_PUBLIC_KEY + DISCORD_BOT_TOKEN + DISCORD_APPLICATION_ID)"
+            )
         try:
             yield
         finally:
             if telegram_client is not None:
                 await telegram_client.aclose()
+            if discord_client is not None:
+                await discord_client.aclose()
             await ssh_pool.close_all()
 
     app = FastAPI(lifespan=lifespan, title="bot-cmder", version="0.1.0")
@@ -132,6 +160,8 @@ def create_app() -> FastAPI:
 
     if telegram_router_obj is not None:
         app.include_router(telegram_router_obj)
+    if discord_router_obj is not None:
+        app.include_router(discord_router_obj)
 
     return app
 
