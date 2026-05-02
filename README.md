@@ -31,7 +31,14 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - `/runbook` is also a router with `list` (SAFE) and `run <name> [args...]` (PRIVILEGED).
 - `/ssh <host> <cmd...>` (PRIVILEGED) — escape hatch for ad-hoc commands; refused unless the joined command fully matches at least one regex in the host's `allowed_commands`.
 
-The Discord / Slack adapters arrive in subsequent phases.
+**Phase 4** — Discord adapter
+- `POST /webhooks/discord` with PyNaCl Ed25519 signature verification (Discord refuses to onboard endpoints that don't sign-check).
+- PING (type 1) → answered inline; APPLICATION_COMMAND (type 2) → defer (`type: 5`) immediately, run dispatch in a `BackgroundTask`, then PATCH `@original` via the per-interaction webhook URL. Honors Discord's 3-second initial-response cap even for slow handlers (SSH, OTP gate).
+- `DiscordClient` handles both deferred follow-ups (no auth — interaction token IS the capability) and slash command registration (bot token).
+- `scripts/register_discord_commands.py` (`just register-discord`) PUT-replaces the slash command schema. Builds the manifest from the live registry so /service action subcommands derived from yaml show up in Discord's autocomplete.
+- Slash commands are flat: each Command and Router gets one top-level `/cmd` with a single STRING `args` option (or `code` for `/otp`). The adapter recombines `/<cmd> <args>` back into the same text-shaped IncomingMessage Telegram produces — same dispatch flow on both platforms.
+
+The Slack adapter arrives in Phase 5.
 
 ## Setup
 
@@ -89,6 +96,7 @@ just lint                             # ruff + black --check
 just show-env-settings                # echo env vars
 just set-telegram-bot-webhook         # POST setWebhook to Telegram (manual; tunnel does this for you)
 just gen-master-key                   # generate a fresh BOT_CMDER_MASTER_KEY for .env
+just register-discord                 # push slash command schema to Discord (Phase 4)
 just enroll-totp <user>               # enroll a user for TOTP (e.g. telegram:111)
 just list-totp                        # list TOTP-enrolled users
 just revoke-totp <user>               # drop a user's TOTP enrollment
@@ -231,6 +239,42 @@ Then optionally narrow ACL:
 acl:
   commands:
     service_drain: ["role:sre"]
+```
+
+## Discord setup (Phase 4)
+
+```shell
+# 1. https://discord.com/developers/applications → New Application.
+#    Copy the Application ID (URL), Public Key (General Info tab),
+#    and bot token (Bot tab → Reset Token).
+echo "DISCORD_APPLICATION_ID=..." >> .env
+echo "DISCORD_PUBLIC_KEY=..."     >> .env  # hex string
+echo "DISCORD_BOT_TOKEN=..."      >> .env
+# Optional but recommended for dev — guild-scoped slash commands
+# propagate instantly instead of taking ~1h:
+echo "DISCORD_GUILD_ID=..."       >> .env
+
+# 2. On the application page → "OAuth2 → URL Generator", pick scopes
+#    `bot` and `applications.commands`. Open the generated URL to
+#    invite the bot to a guild (or DM).
+
+# 3. Configure the Interactions Endpoint URL.
+#    Discord posts each slash command to this URL. Use the same
+#    cloudflared / ngrok tunnel the Telegram setup already uses:
+#    https://<your-tunnel>/webhooks/discord
+#    Paste it into "Interactions Endpoint URL" on the application
+#    page; Discord probes it with a signed PING and refuses to
+#    save unless the bot answers correctly. Make sure `just dev` is
+#    running first.
+
+# 4. Push the slash command schema (registry → Discord manifest).
+just register-discord
+# Output: "Discord accepted N command(s)."
+
+# 5. In Discord (DM with the bot or in the invited guild):
+/help
+/service args:"restart api --host gce"
+/otp code:"123456"
 ```
 
 ## Tests

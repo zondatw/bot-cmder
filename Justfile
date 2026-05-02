@@ -99,3 +99,9 @@ revoke-totp user:
 # WARNING: regenerating this invalidates every existing enrollment.
 gen-master-key:
     @uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# Phase 4 — push the slash command schema to Discord. Run after
+# editing the registry (e.g. adding a yaml action) so Discord's
+# autocomplete UI matches what the bot can actually handle.
+register-discord:
+    uv run python -m scripts.register_discord_commands
