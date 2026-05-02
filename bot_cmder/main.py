@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -16,6 +17,7 @@ from bot_cmder.auth.totp import TOTPVerifier
 from bot_cmder.commands.builtin import install_all
 from bot_cmder.config.schema import AppConfig
 from bot_cmder.config.settings import Settings, get_settings, load_app_config
+from bot_cmder.connectors.ssh import SshConnectorPool
 from bot_cmder.core.dispatcher import Dispatcher
 from bot_cmder.core.registry import CommandRegistry
 
@@ -78,7 +80,14 @@ def create_app() -> FastAPI:
     audit = AuditLogger(config.audit.path)
 
     totp, pending = _build_totp(settings, config)
-    install_all(registry, pending=pending, totp=totp, audit=audit)
+    ssh_pool = SshConnectorPool(config.hosts, config.ssh)
+    if config.hosts:
+        logger.info(
+            "ssh pool configured: %d host(s) — %s",
+            len(config.hosts),
+            ", ".join(sorted(config.hosts)),
+        )
+    install_all(registry, pending=pending, totp=totp, audit=audit, ssh_pool=ssh_pool, config=config)
 
     dispatcher = Dispatcher(
         registry=registry,
@@ -113,6 +122,7 @@ def create_app() -> FastAPI:
         finally:
             if telegram_client is not None:
                 await telegram_client.aclose()
+            await ssh_pool.close_all()
 
     app = FastAPI(lifespan=lifespan, title="bot-cmder", version="0.1.0")
 
@@ -126,16 +136,49 @@ def create_app() -> FastAPI:
     return app
 
 
+_TELEGRAM_VALID_COMMAND_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+
 async def _sync_telegram_command_menu(client: TelegramClient, registry: CommandRegistry) -> None:
     """Push the registry into Telegram's slash-command autocomplete menu.
+
+    Telegram requires command names to match `^[a-z][a-z0-9_]{0,31}$`.
+    A single hyphenated name (`service-restart`) makes setMyCommands
+    reject the entire batch with HTTP 400 — there is no per-entry
+    partial accept. We filter locally so one bad name can't take the
+    whole menu down. Skipped names still work in chat (the dispatcher
+    doesn't apply this regex), they just don't autocomplete.
 
     Best-effort: a network/auth failure here is logged but never blocks
     the app from accepting webhooks.
     """
-    payload = [{"command": c.name, "description": (c.description or c.name)[:256]} for c in registry.all()]
+    # Push one menu entry per top-level surface: each registered Command
+    # AND each Router. Subcommands (`service restart`) intentionally
+    # don't show up — they're discovered via `/<router> help` instead,
+    # which keeps the menu lean as the registry grows.
+    accepted: list[dict[str, str]] = []
+    skipped: list[str] = []
+    for c in registry.all():
+        if _TELEGRAM_VALID_COMMAND_NAME.match(c.name):
+            accepted.append({"command": c.name, "description": (c.description or c.name)[:256]})
+        else:
+            skipped.append(c.name)
+    for r in registry.all_routers():
+        if _TELEGRAM_VALID_COMMAND_NAME.match(r.name):
+            sub_count = len(r.subcommand_names())
+            desc = f"{r.description} ({sub_count} subcommands — try /{r.name} help)"
+            accepted.append({"command": r.name, "description": desc[:256]})
+        else:
+            skipped.append(r.name)
+    if skipped:
+        logger.warning(
+            "skipping %d command(s) from telegram menu (name violates ^[a-z][a-z0-9_]{0,31}$): %s",
+            len(skipped),
+            ", ".join(skipped),
+        )
     try:
-        await client.set_my_commands(payload)
-        logger.info("telegram command menu synced (%d entries)", len(payload))
+        await client.set_my_commands(accepted)
+        logger.info("telegram command menu synced (%d entries)", len(accepted))
     except Exception:
         logger.warning("failed to sync telegram command menu", exc_info=True)
 

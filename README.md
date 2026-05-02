@@ -18,9 +18,20 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - `/otp` builtin enforces same-chat / same-platform OTP delivery, expiry, replay, and emits distinct audit events for each failure mode.
 - Admin CLI: `python -m bot_cmder.cli {enroll,list,revoke}-totp` (or `just enroll-totp <user>`).
 - `/kubectl <subcmd> [args...]` — whitelisted (default get/describe/logs/rollout/scale/top), KUBECONFIG honored, output truncated.
-- `/runbook-list` (SAFE) and `/runbook-run <name> [args...]` (PRIVILEGED) — discovers executable scripts in `runbooks/`, rejects path traversal and shell metacharacters in args.
+- `/runbook list` (SAFE) and `/runbook run <name> [args...]` (PRIVILEGED) — discovers executable scripts in `runbooks/`, rejects path traversal and shell metacharacters in args.
 
-The SSH connector + `/service` actions and the Discord / Slack adapters arrive in subsequent phases.
+**Phase 3** — SSH connector + service actions ⭐ the core SRE use case
+- `SshConnector` over `asyncssh`: one persistent connection per host with TTL-based reuse, strict `known_hosts` checking, key auth only.
+- `SshConnectorPool` indexed by host name; lifecycle tied to FastAPI lifespan.
+- YAML config for `hosts:` (address / user / key_path / allowed_commands) and `services:` (hosts list + action templates like `restart: "sudo systemctl restart api.service"`).
+- `/service` is a **router** — adding `actions:` keys in yaml auto-registers `/service <action>` subcommands. No code change to add a new action; just yaml + restart.
+  - Read-shaped action names (`status`, `logs`, `sysinfo`, `df`, `top`, `ps`, `tail`, ...) classify as SAFE, fan out across every host in parallel.
+  - Everything else (`restart`, `deploy`, `drain`, ...) classifies as PRIVILEGED, TOTP-gated, refuses to run without explicit `--host X`.
+  - `/service list` and `/service info <name>` are hardcoded metadata subcommands.
+- `/runbook` is also a router with `list` (SAFE) and `run <name> [args...]` (PRIVILEGED).
+- `/ssh <host> <cmd...>` (PRIVILEGED) — escape hatch for ad-hoc commands; refused unless the joined command fully matches at least one regex in the host's `allowed_commands`.
+
+The Discord / Slack adapters arrive in subsequent phases.
 
 ## Setup
 
@@ -38,7 +49,7 @@ TELEGRAM_TOKEN=xxxxxxxxxxxxx
 TELEGRAM_WEBHOOK_SECRET=any-long-random-string
 APP_CONFIG_PATH=./config/app.yaml
 
-# Phase 2 — required for /kubectl, /runbook-run and any Risk.PRIVILEGED command
+# Phase 2 — required for /kubectl, /runbook run and any Risk.PRIVILEGED command
 BOT_CMDER_MASTER_KEY=<run `just gen-master-key` to generate>
 ```
 
@@ -107,7 +118,7 @@ just tunnel-ngrok
 
 ## TOTP enrollment (Phase 2)
 
-Privileged commands (`/kubectl`, `/runbook-run`) require a TOTP code
+Privileged commands (`/kubectl`, `/runbook run`) require a TOTP code
 delivered out-of-band, stored per-user encrypted at rest with
 `BOT_CMDER_MASTER_KEY`.
 
@@ -134,6 +145,93 @@ Then in the bot DM:
 
 Audit log records every step: `OTP_REQUESTED`, `OTP_INVALID`,
 `OTP_CROSS_CHAT`, `OTP_EXPIRED`, `EXECUTED ... via_otp=true`.
+
+## SSH host setup (Phase 3)
+
+`/service *` and `/ssh` need `config.hosts` populated and the bot
+process able to SSH into each host non-interactively.
+
+```shell
+# 1. On the bot host: generate a dedicated SSH key per remote host
+#    (one key per host limits blast radius if any single one leaks).
+ssh-keygen -t ed25519 -N "" -f /etc/bot-cmder/keys/server-a.ed25519 \
+           -C "bot-cmder@server-a"
+
+# 2. On the remote: install the public key for a low-priv account
+#    that has the specific sudo rules you need.
+#    (sudoers: `bot ALL=(root) NOPASSWD: /bin/systemctl restart api.service`)
+ssh-copy-id -i /etc/bot-cmder/keys/server-a.ed25519.pub deploy@10.0.1.5
+
+# 3. Pin the host key (strict checking is on by default).
+ssh-keyscan -H 10.0.1.5 >> ~/.ssh/known_hosts
+```
+
+Then add the host to `config/app.yaml`:
+
+```yaml
+hosts:
+  server-a:
+    address: 10.0.1.5
+    user: deploy
+    key_path: /etc/bot-cmder/keys/server-a.ed25519
+    allowed_commands:
+      - "^sudo systemctl (status|restart) api\\.service$"
+
+services:
+  api:
+    hosts: [server-a]
+    actions:
+      status:  "sudo systemctl status api.service"      # SAFE  fan-out
+      logs:    "sudo journalctl -u api.service -n 100"  # SAFE  fan-out
+      sysinfo: "uname -a"                               # SAFE  fan-out
+      restart: "sudo systemctl restart api.service"     # PRIV  --host required
+
+acl:
+  commands:
+    # PRIVILEGED actions auto-classify if you don't list them, but
+    # adding a role rule here narrows it further.
+    service_restart: ["role:sre"]
+    ssh:             ["role:sre"]
+```
+
+Then in the bot DM:
+
+```
+/service                              → router help (lists subcommands)
+/service list                         → lists configured services + hosts
+/service info api                     → shows api's hosts + each action's command
+/service status api                   → fan-out across api's hosts
+/service sysinfo api                  → fan-out (action name → SAFE)
+/service restart api --host server-a  → asks for /otp, then SSH-restarts
+/ssh server-a sudo systemctl status api.service   → asks for /otp, allowlist-checked
+```
+
+### Adding a new action
+
+Want `/service diskfree api`? Edit yaml, restart, done:
+
+```yaml
+services:
+  api:
+    actions:
+      diskfree: "df -h | head"   # 'df' is in _SAFE_ACTION_NAMES → auto-SAFE + fan-out
+```
+
+Want `/service drain api --host X`? Same thing — `drain` is not a
+read-shaped name, so it auto-classifies as PRIVILEGED:
+
+```yaml
+actions:
+  drain: "kubectl drain $(hostname) --ignore-daemonsets"
+```
+
+Then optionally narrow ACL:
+
+```yaml
+acl:
+  commands:
+    service_drain: ["role:sre"]
+```
 
 ## Tests
 

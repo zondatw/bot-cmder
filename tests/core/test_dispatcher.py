@@ -161,3 +161,80 @@ async def test_privileged_command_without_gate_runs_inline_phase1_behavior(dispa
     events = _read_audit(audit_path)
     assert events[0]["event"] == "EXECUTED"
     assert "args=['api']" in resp.text
+
+
+# --- Phase 3+: Router rewrite -------------------------------------------
+
+
+@pytest.fixture
+def router_dispatcher(app_config, audit, pending):
+    """A dispatcher where the registry has a `widget` router with a
+    SAFE `list` subcommand and a PRIVILEGED `restart` subcommand."""
+    reg = CommandRegistry()
+    router = reg.create_router("widget", description="manage widgets")
+
+    @router.subcommand("list", risk=Risk.SAFE, description="show all")
+    async def _list(ctx, args):
+        return OutgoingResponse.text_reply(f"list args={args}")
+
+    @router.subcommand("restart", risk=Risk.PRIVILEGED, description="restart one")
+    async def _restart(ctx, args):
+        return OutgoingResponse.text_reply(f"restart args={args}")
+
+    # ACL: allow widget_list (SAFE → default_allow_safe), explicitly allow restart for sre.
+    app_config.acl.commands["widget_restart"] = ["role:sre"]
+    return Dispatcher(
+        registry=reg,
+        config=app_config,
+        audit=audit,
+        acl_check=check_allowed,
+        pending=pending,
+    )
+
+
+async def test_router_no_args_prints_help(router_dispatcher, make_message):
+    resp = await router_dispatcher.dispatch(make_message("/widget"))
+    assert resp is not None
+    assert "/widget — manage widgets" in resp.text
+    assert "/widget list" in resp.text
+    assert "/widget restart" in resp.text
+
+
+async def test_router_help_subcommand_prints_help(router_dispatcher, make_message):
+    resp = await router_dispatcher.dispatch(make_message("/widget help"))
+    assert resp is not None
+    assert "/widget — manage widgets" in resp.text
+
+
+async def test_router_unknown_subcommand_audited_and_help_in_reply(router_dispatcher, make_message, audit_path):
+    resp = await router_dispatcher.dispatch(make_message("/widget bogus"))
+    assert resp is not None
+    assert "unknown subcommand: bogus" in resp.text
+    # Help also embedded so user can recover without typing /widget help.
+    assert "/widget list" in resp.text
+    assert _read_audit(audit_path)[0]["event"] == "ROUTER_UNKNOWN_SUBCOMMAND"
+
+
+async def test_router_safe_subcommand_runs_immediately(router_dispatcher, make_message, audit_path):
+    resp = await router_dispatcher.dispatch(make_message("/widget list extra args"))
+    assert "list args=['extra', 'args']" in resp.text
+    audited = _read_audit(audit_path)[0]
+    # Audit records the synthetic internal name, not the surface form.
+    assert audited["event"] == "EXECUTED"
+    assert audited["command"] == "widget_list"
+    assert audited["args"] == ["extra", "args"]
+
+
+async def test_router_privileged_subcommand_triggers_otp_gate(router_dispatcher, pending, make_message, audit_path):
+    resp = await router_dispatcher.dispatch(make_message("/widget restart svc-a", user_id="111"))
+    assert "Privileged" in resp.text and "/otp" in resp.text
+    # Pending session was stashed under the synthetic command name with
+    # the post-rewrite args (no leading "restart").
+    session = pending.pop("telegram:111")
+    assert session is not None
+    assert session.command_name == "widget_restart"
+    assert session.args == ["svc-a"]
+    audited = _read_audit(audit_path)[-1]
+    assert audited["event"] == "OTP_REQUESTED"
+    assert audited["command"] == "widget_restart"
+    assert audited["args"] == ["svc-a"]

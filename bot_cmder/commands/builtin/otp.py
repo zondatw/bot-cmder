@@ -79,8 +79,11 @@ def install(
             )
             return OutgoingResponse.text_reply("invalid code")
 
-        # Resolve and run the original command.
-        cmd = registry.get(session.command_name)
+        # Resolve and run the original command. Use find_command()
+        # (not get()) so router subcommands like `service_restart`
+        # — which live under a Router, not at the top level — can be
+        # resumed too.
+        cmd = registry.find_command(session.command_name)
         if cmd is None:
             audit.log(
                 event="OTP_COMMAND_GONE",

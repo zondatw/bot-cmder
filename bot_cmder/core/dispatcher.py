@@ -43,16 +43,42 @@ class Dispatcher:
         if parsed is None:
             return None  # not a command, ignore silently
 
-        cmd = self.registry.get(parsed.name)
-        if cmd is None:
-            self.audit.log(
-                event="COMMAND_UNKNOWN",
-                user=msg.user.norm_id,
-                chat=msg.chat_id,
-                command=parsed.name,
-                args=parsed.args,
-            )
-            return OutgoingResponse.text_reply(f"unknown command: /{parsed.name}")
+        # Router rewrite. If parsed.name names a Router, peel off the
+        # subcommand (parsed.args[0]) and resolve to the underlying
+        # internal Command (e.g. "service" + ["restart", "hello"] →
+        # cmd "service_restart" with args ["hello"]). The rest of the
+        # pipeline (ACL, OTP gate, handler, audit) sees the internal
+        # command name unchanged, so config keys and historical audit
+        # records keep working.
+        router = self.registry.get_router(parsed.name)
+        if router is not None:
+            if not parsed.args or parsed.args[0] == "help":
+                return OutgoingResponse.text_reply(router.help_text())
+            sub_name = parsed.args[0]
+            sub_cmd = router.get_subcommand(sub_name)
+            if sub_cmd is None:
+                self.audit.log(
+                    event="ROUTER_UNKNOWN_SUBCOMMAND",
+                    user=msg.user.norm_id,
+                    chat=msg.chat_id,
+                    router=router.name,
+                    subcommand=sub_name,
+                )
+                return OutgoingResponse.text_reply(f"unknown subcommand: {sub_name}\n\n{router.help_text()}")
+            cmd = sub_cmd
+            command_args = parsed.args[1:]
+        else:
+            cmd = self.registry.get(parsed.name)
+            if cmd is None:
+                self.audit.log(
+                    event="COMMAND_UNKNOWN",
+                    user=msg.user.norm_id,
+                    chat=msg.chat_id,
+                    command=parsed.name,
+                    args=parsed.args,
+                )
+                return OutgoingResponse.text_reply(f"unknown command: /{parsed.name}")
+            command_args = parsed.args
 
         if not self.acl_check(msg.user.norm_id, cmd, self.config):
             self.audit.log(
@@ -60,7 +86,7 @@ class Dispatcher:
                 user=msg.user.norm_id,
                 chat=msg.chat_id,
                 command=cmd.name,
-                args=parsed.args,
+                args=command_args,
             )
             return OutgoingResponse.text_reply("forbidden")
 
@@ -74,14 +100,14 @@ class Dispatcher:
                 chat_id=msg.chat_id,
                 platform=msg.platform,
                 command_name=cmd.name,
-                args=parsed.args,
+                args=command_args,
             )
             self.audit.log(
                 event="OTP_REQUESTED",
                 user=msg.user.norm_id,
                 chat=msg.chat_id,
                 command=cmd.name,
-                args=parsed.args,
+                args=command_args,
                 ttl_s=self.pending.ttl_s,
             )
             return OutgoingResponse.text_reply(
@@ -91,14 +117,14 @@ class Dispatcher:
         ctx = CommandContext.from_message(msg, self.config, self.now)
 
         try:
-            response = await asyncio.wait_for(cmd.handler(ctx, parsed.args), timeout=cmd.timeout_s)
+            response = await asyncio.wait_for(cmd.handler(ctx, command_args), timeout=cmd.timeout_s)
         except asyncio.TimeoutError:
             self.audit.log(
                 event="COMMAND_TIMEOUT",
                 user=msg.user.norm_id,
                 chat=msg.chat_id,
                 command=cmd.name,
-                args=parsed.args,
+                args=command_args,
                 timeout_s=cmd.timeout_s,
             )
             return OutgoingResponse.text_reply(f"timeout after {cmd.timeout_s}s")
@@ -108,7 +134,7 @@ class Dispatcher:
                 user=msg.user.norm_id,
                 chat=msg.chat_id,
                 command=cmd.name,
-                args=parsed.args,
+                args=command_args,
                 error=repr(exc),
             )
             return OutgoingResponse(kind=ResponseKind.TEXT, text=f"error: {exc}")
@@ -118,6 +144,6 @@ class Dispatcher:
             user=msg.user.norm_id,
             chat=msg.chat_id,
             command=cmd.name,
-            args=parsed.args,
+            args=command_args,
         )
         return response

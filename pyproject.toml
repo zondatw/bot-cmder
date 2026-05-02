@@ -15,6 +15,7 @@ dependencies = [
     "pyotp>=2.9",
     "cryptography>=43.0",
     "aiosqlite>=0.20",
+    "asyncssh>=2.18",
     # `requests` and `environs` were dropped along with the legacy
     # bot_cmder/modules/hook/ + bot_cmder/settings/ packages: httpx and
     # pydantic-settings cover those needs in the new layout.
