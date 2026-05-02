@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Push the slash command schema to Discord.
+
+Run after editing the registry (adding a new builtin, renaming an
+existing one, etc.) so Discord's autocomplete UI matches what the
+bot can actually handle. Idempotent — Discord PUT-replaces the
+whole command list each call.
+
+Scoping:
+  - DISCORD_GUILD_ID set → register to that one guild. Updates
+    propagate instantly. Use this in dev so a `service info`
+    description tweak shows up while you're still in the chat.
+  - DISCORD_GUILD_ID unset → register globally. Updates take
+    ~1 hour to propagate but the commands appear in every guild
+    the bot is in, plus DMs.
+
+Schema is intentionally flat: every top-level Command and every
+Router is one slash command. Commands that take user input get a
+single STRING option (`args` for everything, `code` for /otp). The
+DiscordAdapter recombines /<cmd> <args> back into the same
+text-shaped IncomingMessage Telegram produces, so the dispatcher
+stays platform-agnostic.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+from typing import Any
+
+from bot_cmder.adapters.discord.client import DiscordClient
+from bot_cmder.audit.log import AuditLogger
+from bot_cmder.auth.pending import PendingOTPSessions
+from bot_cmder.auth.secret_store import SecretStore
+from bot_cmder.auth.totp import TOTPVerifier
+from bot_cmder.commands.builtin import install_all
+from bot_cmder.config.settings import get_settings, load_app_config
+from bot_cmder.connectors.ssh import SshConnectorPool
+from bot_cmder.core.registry import CommandRegistry, Router
+
+# Commands that don't take any free-form arguments — no STRING option.
+_NO_ARGS_COMMANDS = frozenset({"help", "whoami"})
+
+# Per-command override: name + description + required flag for the
+# single STRING option. Anything not listed here defaults to
+# `args` (optional).
+_OPTION_OVERRIDES: dict[str, dict[str, Any]] = {
+    "otp": {"name": "code", "description": "6-digit TOTP code", "required": True},
+}
+
+CHAT_INPUT_TYPE = 1
+STRING_OPTION_TYPE = 3
+
+
+def _build_command_schema(name: str, description: str) -> dict[str, Any]:
+    if name in _NO_ARGS_COMMANDS:
+        return {
+            "name": name,
+            "description": description[:100] or name,
+            "type": CHAT_INPUT_TYPE,
+        }
+    opt = _OPTION_OVERRIDES.get(
+        name,
+        {"name": "args", "description": "command arguments", "required": False},
+    )
+    return {
+        "name": name,
+        "description": description[:100] or name,
+        "type": CHAT_INPUT_TYPE,
+        "options": [
+            {
+                "name": opt["name"],
+                "description": opt["description"][:100],
+                "type": STRING_OPTION_TYPE,
+                "required": opt.get("required", False),
+            }
+        ],
+    }
+
+
+def _build_router_schema(router: Router) -> dict[str, Any]:
+    sub_count = len(router.subcommand_names())
+    desc = f"{router.description} ({sub_count} subcommands — see /{router.name} help)"
+    return {
+        "name": router.name,
+        "description": desc[:100],
+        "type": CHAT_INPUT_TYPE,
+        "options": [
+            {
+                "name": "args",
+                "description": "subcommand + args (e.g. 'restart api --host X')"[:100],
+                "type": STRING_OPTION_TYPE,
+                "required": False,
+            }
+        ],
+    }
+
+
+def build_manifest(registry: CommandRegistry) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for cmd in registry.all():
+        out.append(_build_command_schema(cmd.name, cmd.description))
+    for router in registry.all_routers():
+        out.append(_build_router_schema(router))
+    return out
+
+
+async def _push() -> int:
+    settings = get_settings()
+    if not (settings.discord_application_id and settings.discord_bot_token):
+        print(
+            "ERROR: DISCORD_APPLICATION_ID + DISCORD_BOT_TOKEN must both be set in .env",
+            file=sys.stderr,
+        )
+        return 1
+
+    config = load_app_config(settings)
+
+    # Build the registry exactly like main.py would so the manifest
+    # reflects what the running bot will actually accept (including
+    # dynamic /service action subcommands derived from yaml).
+    audit = AuditLogger(config.audit.path)
+    if settings.bot_cmder_master_key:
+        store = SecretStore(config.totp.secret_store_path, settings.bot_cmder_master_key)
+        totp: TOTPVerifier | None = TOTPVerifier(store)
+        pending: PendingOTPSessions | None = PendingOTPSessions(ttl_s=config.totp.session_ttl_s)
+    else:
+        totp = None
+        pending = None
+    ssh_pool = SshConnectorPool(config.hosts, config.ssh)
+    registry = CommandRegistry()
+    install_all(registry, pending=pending, totp=totp, audit=audit, ssh_pool=ssh_pool, config=config)
+
+    manifest = build_manifest(registry)
+    print(f"Manifest: {len(manifest)} top-level command(s):")
+    for m in manifest:
+        opts = m.get("options", [])
+        opt_str = f" + {opts[0]['name']}" if opts else ""
+        print(f"  /{m['name']}{opt_str} — {m['description']}")
+
+    async with DiscordClient(
+        bot_token=settings.discord_bot_token,
+        application_id=settings.discord_application_id,
+    ) as client:
+        if settings.discord_guild_id:
+            print(f"\nPushing to guild {settings.discord_guild_id} (instant propagation)...")
+            response = await client.overwrite_guild_commands(settings.discord_guild_id, manifest)
+        else:
+            print("\nPushing globally (~1h propagation)...")
+            response = await client.overwrite_global_commands(manifest)
+
+    print(f"Discord accepted {len(response)} command(s).")
+    return 0
+
+
+def main() -> int:
+    return asyncio.run(_push())
+
+
+if __name__ == "__main__":
+    sys.exit(main())
