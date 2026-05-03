@@ -162,7 +162,73 @@ Enable it now only if you plan to do Phase 6 socket mode or future
 
 ---
 
-## 6. Verify in chat
+## 6. Add yourself to the ACL
+
+Before any command works, your `slack:U<id>` norm_id must appear in
+`config/app.yaml` `users.aliases`. Two ways to discover it:
+
+### 6a. From the Slack client (fastest)
+
+1. Click your own avatar in the bottom-left of the Slack client →
+   **View profile**.
+2. On the profile card that pops up, click **⋮** (three-dot menu) →
+   **Copy member ID**.
+3. You get something like `U0123ABCD` (no `slack:` prefix). Paste
+   into `config/app.yaml`, prepended with `slack:`:
+
+   ```yaml
+   users:
+     - id: zonda
+       aliases:
+         - "telegram:1234567890"
+         - "discord:1111111111111111111"
+         - "slack:U0123ABCD"          # ← add
+       role: sre
+   ```
+
+### 6b. From the audit log (most reliable, shared with Discord/Telegram)
+
+Doesn't require Slack UI access; works if a teammate runs the bot
+on a host you don't sit at:
+
+1. Type `/help` in Slack from the user account you want to ACL-add.
+2. Bot replies `forbidden` (because you're not in `users.aliases` yet).
+3. The denial is logged with the **exact** norm_id the dispatcher
+   checked against:
+
+   ```shell
+   tail -n 5 var/audit.jsonl | jq -c 'select(.platform=="slack" and .event=="AUTH_DENIED")'
+   # {"event":"AUTH_DENIED","user":"slack:U0123ABCD","chat":"C...",...}
+   ```
+
+4. Copy the `user` field verbatim into `users.aliases` as above.
+
+> Methods 6a and 6b should produce the same value. If they don't,
+> trust the audit log — that's what the bot actually sees. Diverging
+> values usually mean a multi-workspace Enterprise Grid install, in
+> which case the audit log carries the workspace-local ID the
+> dispatcher uses.
+
+`just dev` autoreloads on yaml save (with `RELOAD=1`); no restart needed.
+
+### 6c. Enroll TOTP for the new norm_id
+
+TOTP secrets are keyed by norm_id, not by canonical user — so the
+secret you enrolled for Telegram or Discord doesn't carry over. One
+extra entry in your authenticator app:
+
+```shell
+just enroll-totp slack:U0123ABCD       # prints otpauth:// URI / QR
+just list-totp                          # confirms it landed
+```
+
+(Background: see Discord [Gotcha 3](discord-setup.md#common-acl--totp-gotchas)
+for the design rationale and the Phase 7 hardening candidate that
+would unify enrollments across platforms.)
+
+---
+
+## 7. Verify in chat
 
 In any channel where the bot is invited (or in a DM):
 
@@ -195,7 +261,7 @@ Discord, with `platform=slack` distinguishing the source.
 
 ---
 
-## 7. Reply visibility — `ephemeral` vs `in_channel`
+## 8. Reply visibility — `ephemeral` vs `in_channel`
 
 Slack slash commands can reply two ways:
 
@@ -240,7 +306,7 @@ slack:
 | `curl GET /webhooks/slack` returns `Method Not Allowed` | **not a problem** — route is POST-only by design | this 405 actually proves the route is mounted; pair with the POST `curl` to confirm signature gate is active |
 | `/help` typed in Slack returns `dispatch_failed` | bot not running OR endpoint URL not saved on that specific command | check `just dev` is up and the **Slash Commands** entry for `/help` has the right Request URL filled in |
 | Slash command works for SAFE only; PRIVILEGED replies "forbidden" without OTP prompt | `acl.commands` doesn't grant the role for the synthetic command name | see Discord docs [Gotcha 2](discord-setup.md#common-acl--totp-gotchas) — same root cause; add e.g. `service_restart: ["role:sre"]` |
-| `/otp` rejected on Slack even though Telegram OTP works | TOTP enrolled per-norm_id, not per-canonical-user | run `just enroll-totp slack:U0123ABCD` (your norm_id from `/whoami`); see Discord [Gotcha 3](discord-setup.md#common-acl--totp-gotchas) |
+| `/otp` rejected on Slack even though Telegram OTP works | TOTP enrolled per-norm_id, not per-canonical-user | run `just enroll-totp slack:U0123ABCD` (norm_id from [§6](#6-add-yourself-to-the-acl)); see Discord [Gotcha 3](discord-setup.md#common-acl--totp-gotchas) |
 | `/whoami` reveals user IDs to the whole channel | `reply_visibility: by_risk` makes SAFE commands public | add `whoami: ephemeral` to `slack.visibility_overrides` |
 | Reply takes 3+ seconds, channel shows "dispatch_failed" briefly | normal — bot acks within 3s and posts real reply via `response_url` (up to 30 min later); if you see `dispatch_failed` PERSISTING, the bot crashed or tunnel dropped | check `just dev` stderr; the BackgroundTask exception, if any, is logged with the chat_id |
 
