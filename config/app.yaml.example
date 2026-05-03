@@ -127,3 +127,31 @@ services: {}
 #       sysinfo: "uname -a"                               # SAFE  fan-out
 #       restart: "sudo systemctl restart api.service"     # PRIV  --host required
 #       deploy:  "/usr/local/bin/deploy-api"              # PRIV  --host required
+
+# Phase 5 — Slack adapter knobs.
+#
+# Slack slash commands can reply two ways:
+#   - ephemeral   : only the user who invoked the command sees the reply
+#   - in_channel  : everyone in the channel sees the reply
+#
+# `reply_visibility` sets the global default. The `by_risk` mode is
+# the suggested middle ground — diagnostic SAFE commands (`/help`,
+# `/health`, `/service status`, `/service sysinfo`) go to the channel
+# so teammates can spot each other's status checks; PRIVILEGED ones
+# (`/service restart`, `/ssh`, `/kubectl`, `/runbook run`) stay
+# private so SSH output isn't broadcast.
+#
+# `visibility_overrides` tweaks individual commands. Keys are the
+# synthetic command names the dispatcher records (e.g. `service_restart`,
+# not `service restart`) — same string `audit.jsonl` records under
+# `command:`, easy to copy. Values must be `in_channel` or `ephemeral`
+# (the override resolves to one of the two final states).
+slack:
+  reply_visibility: by_risk        # by_risk | in_channel | ephemeral
+  visibility_overrides: {}
+  # Examples:
+  # visibility_overrides:
+  #   whoami: ephemeral            # don't broadcast user IDs
+  #   help:   in_channel           # team learns by lurking
+  #   service_status: in_channel   # ops dashboard vibe
+  #   service_logs:   ephemeral    # logs may carry sensitive data

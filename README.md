@@ -40,7 +40,16 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - `scripts/register_discord_commands.py` (`just register-discord`) PUT-replaces the slash command schema. Builds the manifest from the live registry so /service action subcommands derived from yaml show up in Discord's autocomplete.
 - Slash commands are flat: each Command and Router gets one top-level `/cmd` with a single STRING `args` option (or `code` for `/otp`). The adapter recombines `/<cmd> <args>` back into the same text-shaped IncomingMessage Telegram produces — same dispatch flow on both platforms.
 
-The Slack adapter arrives in Phase 5.
+**Phase 5** — Slack adapter
+- `POST /webhooks/slack` with HMAC-SHA256 signature verification (`v0:<ts>:<body>`, ±5-min replay window, constant-time compare).
+- One endpoint handles both slash commands (form-encoded) and the Events API `url_verification` challenge (JSON) — distinguished by Content-Type, signature gate runs before either branch.
+- Defer-then-respond pattern mirrors Discord: 200 OK ack within 3s, BackgroundTask dispatches, real reply POSTed to Slack's per-invocation `response_url` (one-shot, 30-min TTL, self-authorizing — no bot token needed).
+- Reply visibility tunable per workspace via `config/app.yaml`:
+  - `reply_visibility: by_risk` (default) — SAFE commands (`/help`, `/health`, `/service status`) broadcast to channel for collaborative ops; PRIVILEGED ones (`/service restart`, `/ssh`, `/kubectl`) stay ephemeral so SSH output isn't leaked.
+  - `in_channel` / `ephemeral` — global override.
+  - `visibility_overrides: {whoami: ephemeral, ...}` — per-command tweak (key = synthetic name from audit log).
+- `/otp` propagates the resumed command's risk to the response so the visibility resolver treats `/otp 123456 → service_restart` reply as PRIVILEGED, not as `/otp`'s SAFE.
+- Pure stdlib HMAC + httpx — no `slack-sdk` dependency.
 
 ## Setup
 
@@ -279,6 +288,43 @@ just register-discord
 For the **full walkthrough** — where each value comes from in the dev
 portal, OAuth2 permission discussion, troubleshooting table, and
 secret rotation steps — see [`docs/discord-setup.md`](docs/discord-setup.md).
+
+## Slack setup (Phase 5)
+
+Quick path:
+
+```shell
+# 1. Slack app management → Create New App → From scratch:
+#    https://api.slack.com/apps
+echo "SLACK_SIGNING_SECRET=..." >> .env  # Basic Information → App Credentials
+echo "SLACK_BOT_TOKEN=xoxb-..."  >> .env  # OAuth & Permissions (after install)
+
+# 2. OAuth & Permissions → add `commands` + `chat:write` scopes →
+#    "Install to Workspace" → Allow.
+
+# 3. Generate the manifest from the live registry (single source of
+#    truth — no hand-maintained manifest file). Paste output into
+#    Slack app → Features → App Manifest → Save → accept reinstall.
+echo "SLACK_REQUEST_URL=<your-ngrok-domain>" >> .env  # or set NGROK_DOMAIN
+just register-slack > /tmp/slack-manifest.yaml
+
+# 4. (Optional) tune reply visibility in config/app.yaml:
+cat >> config/app.yaml <<'YAML'
+slack:
+  reply_visibility: by_risk        # SAFE → in_channel, PRIVILEGED → ephemeral
+  visibility_overrides:
+    whoami: ephemeral              # don't broadcast user IDs
+YAML
+
+# 5. In Slack:
+/help
+/service restart api --host gce
+/otp 123456
+```
+
+For the **full walkthrough** — every UI click, scope rationale,
+troubleshooting table, secret rotation, and the visibility
+config matrix — see [`docs/slack-setup.md`](docs/slack-setup.md).
 
 ## Tests
 

@@ -57,6 +57,31 @@ class Settings(BaseSettings):
     discord_application_id: str | None = None
     discord_guild_id: str | None = None
 
+    # Phase 5 — Slack adapter. Both required for the adapter to mount;
+    # without either, /webhooks/slack stays absent and Slack is silently
+    # disabled (logged at WARNING during startup).
+    #   - SLACK_SIGNING_SECRET: hex string from the Slack app's "Basic
+    #     Information" page → "App Credentials" → "Signing Secret".
+    #     Used to verify every incoming slash command via
+    #     HMAC-SHA256(`v0:<ts>:<body>`); Slack rejects endpoints that
+    #     accept unsigned payloads.
+    #   - SLACK_BOT_TOKEN: bot token from "OAuth & Permissions" page
+    #     (xoxb-...). Currently unused for replies (per-request
+    #     `response_url` doesn't need bot auth) but reserved for Phase
+    #     6 socket mode + future Block Kit posting.
+    # Reply visibility tuning (ephemeral vs in_channel) lives in
+    # `config/app.yaml` under `slack:`, not here — it's behavior, not
+    # secrets.
+    slack_signing_secret: str | None = None
+    slack_bot_token: str | None = None
+
+    # Read ONLY by scripts/register_slack_commands.py (the running bot
+    # never touches this — Slack tells the bot where the request came
+    # from per-call). Public HTTPS URL Slack should POST slash commands
+    # to. Bare hostname is fine; the script appends /webhooks/slack.
+    # Falls back to NGROK_DOMAIN if unset, so dev iteration is terse.
+    slack_request_url: str | None = None
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

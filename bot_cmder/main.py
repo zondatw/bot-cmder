@@ -9,6 +9,8 @@ from fastapi import FastAPI
 
 from bot_cmder.adapters.discord import DiscordAdapter, DiscordClient
 from bot_cmder.adapters.discord import make_router as discord_router
+from bot_cmder.adapters.slack import SlackAdapter, SlackClient
+from bot_cmder.adapters.slack import make_router as slack_router
 from bot_cmder.adapters.telegram import TelegramAdapter, TelegramClient
 from bot_cmder.adapters.telegram import make_router as telegram_router
 from bot_cmder.audit.log import AuditLogger
@@ -128,6 +130,20 @@ def create_app() -> FastAPI:
             logger.exception("DISCORD_PUBLIC_KEY invalid; discord adapter disabled")
             discord_router_obj = None
 
+    slack_client: SlackClient | None = None
+    slack_router_obj = None
+    if settings.slack_signing_secret:
+        # SLACK_BOT_TOKEN is currently unused for replies (response_url
+        # is self-authorizing) but we still accept None — Phase 6 socket
+        # mode + future chat.postMessage paths will flip the contract.
+        slack_client = SlackClient(bot_token=settings.slack_bot_token)
+        slack_adapter = SlackAdapter(slack_client, config.slack)
+        slack_router_obj = slack_router(
+            slack_adapter,
+            dispatcher,
+            signing_secret=settings.slack_signing_secret,
+        )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         names = ", ".join(c.name for c in registry.all())
@@ -143,6 +159,14 @@ def create_app() -> FastAPI:
             logger.warning(
                 "discord adapter disabled (need DISCORD_PUBLIC_KEY + DISCORD_BOT_TOKEN + DISCORD_APPLICATION_ID)"
             )
+        if slack_router_obj is not None:
+            logger.info(
+                "slack adapter mounted (reply_visibility=%s, %d override(s))",
+                config.slack.reply_visibility,
+                len(config.slack.visibility_overrides),
+            )
+        else:
+            logger.warning("slack adapter disabled (need SLACK_SIGNING_SECRET)")
         try:
             yield
         finally:
@@ -150,6 +174,8 @@ def create_app() -> FastAPI:
                 await telegram_client.aclose()
             if discord_client is not None:
                 await discord_client.aclose()
+            if slack_client is not None:
+                await slack_client.aclose()
             await ssh_pool.close_all()
 
     app = FastAPI(lifespan=lifespan, title="bot-cmder", version="0.1.0")
@@ -162,6 +188,8 @@ def create_app() -> FastAPI:
         app.include_router(telegram_router_obj)
     if discord_router_obj is not None:
         app.include_router(discord_router_obj)
+    if slack_router_obj is not None:
+        app.include_router(slack_router_obj)
 
     return app
 
