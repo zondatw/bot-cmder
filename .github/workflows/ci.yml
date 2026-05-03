@@ -42,7 +42,7 @@ jobs:
         python-version: ["3.10", "3.12"]
     steps:
       - name: Check out repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv (with cache)
         uses: astral-sh/setup-uv@v5
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python 3.12
         # Single Python is enough — black / ruff / codespell are all
