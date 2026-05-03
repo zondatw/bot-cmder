@@ -146,4 +146,10 @@ class Dispatcher:
             command=cmd.name,
             args=command_args,
         )
+        # Annotate so adapters (specifically Slack's reply-visibility
+        # selector) know what risk class actually ran. Done here, not
+        # inside each handler, so we don't have to teach 8+ builtins
+        # about a Slack-only concern. Telegram/Discord ignore it.
+        response.risk = cmd.risk.value
+        response.command_name = cmd.name
         return response

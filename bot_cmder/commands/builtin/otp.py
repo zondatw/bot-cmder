@@ -126,4 +126,10 @@ def install(
             args=session.args,
             via_otp=True,
         )
+        # Propagate the RESUMED command's risk, not /otp's own SAFE,
+        # so the Slack adapter (which uses risk for reply visibility)
+        # treats `/otp 123456 → service_restart` output as PRIVILEGED
+        # — i.e. ephemeral by default, not broadcast to the channel.
+        response.risk = cmd.risk.value
+        response.command_name = cmd.name
         return response

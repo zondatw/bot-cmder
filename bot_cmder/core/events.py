@@ -53,6 +53,15 @@ class OutgoingResponse:
     text: str
     buttons: list[list[Button]] = field(default_factory=list)
     reply_to_message_id: str | None = None
+    # Optional metadata about the command that produced this response.
+    # Set by the dispatcher (and by /otp on resume) so adapters can
+    # decide platform-specific things like Slack's ephemeral-vs-public
+    # reply visibility without re-parsing the command. None means
+    # "no command actually ran" (e.g. ACL denial, unknown command).
+    # `risk` is the str value (`"safe"` / `"privileged"`) rather than
+    # the Risk enum to avoid a circular import core.events -> registry.
+    risk: str | None = None
+    command_name: str | None = None
 
     @classmethod
     def text_reply(cls, text: str, reply_to: str | None = None) -> OutgoingResponse:
