@@ -140,6 +140,31 @@ async def test_valid_code_runs_original_handler(setup, app_config, audit_path):
     assert events[-1]["event"] == "EXECUTED"
     assert events[-1]["via_otp"] is True
     assert events[-1]["command"] == "restart"
+    # The response carries the resumed command's metadata so platform
+    # adapters (Slack visibility / chat echo) can render the actually-
+    # executed command rather than the literal "/otp <code>" the user
+    # typed. Risk goes to PRIVILEGED so by_risk → ephemeral keeps SSH
+    # output private; displayed_command reconstructs the resumed call
+    # from the synthetic name + stashed args.
+    assert resp.risk == "privileged"
+    assert resp.command_name == "restart"
+    assert resp.displayed_command == "/restart api"
+
+
+async def test_valid_code_resumes_command_with_no_args(setup, app_config, audit_path):
+    """displayed_command for a no-args resumed command stays terse —
+    no trailing space (a regression risk on the f-string reconstruction)."""
+    reg, pending, _, _, _, secret = setup
+    pending.stash(
+        user_norm_id="telegram:111",
+        chat_id="42",
+        platform=Platform.TELEGRAM,
+        command_name="restart",
+        args=[],
+    )
+    code = pyotp.TOTP(secret).now()
+    resp = await reg.get("otp").handler(_ctx(app_config), [code])
+    assert resp.displayed_command == "/restart"
 
 
 async def test_valid_code_when_command_was_unregistered_after_stash(setup, app_config, audit_path):

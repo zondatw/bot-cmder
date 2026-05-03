@@ -79,7 +79,11 @@ class SlackAdapter(PlatformAdapter):
             # quietly; the operator can still tail the audit log.
             return
         in_channel = self._resolve_in_channel(resp)
-        body = self._with_command_echo(msg.text, resp.text)
+        # When the dispatcher (or /otp resume) tells us "the executed
+        # command was different from what was typed", echo THAT — see
+        # the displayed_command field on OutgoingResponse for why.
+        echo_target = resp.displayed_command or msg.text
+        body = self._with_command_echo(echo_target, resp.text)
         await self._client.send_response(response_url, body, in_channel=in_channel)
 
     def _resolve_in_channel(self, resp: OutgoingResponse) -> bool:

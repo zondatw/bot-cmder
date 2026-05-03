@@ -132,4 +132,15 @@ def install(
         # — i.e. ephemeral by default, not broadcast to the channel.
         response.risk = cmd.risk.value
         response.command_name = cmd.name
+        # Make Slack's command-echo show the resumed command (e.g.
+        # `/ssh hello uptime`) instead of the literal `/otp <redacted>`
+        # the user typed — otherwise the chat reads as
+        #     > /otp <redacted>
+        #     unknown host: hello (known: gce)
+        # which is disorienting (where did "hello" come from?).
+        # Reconstruct from the synthetic name + stashed args, the same
+        # canonical form the dispatcher recorded in OTP_REQUESTED audit.
+        response.displayed_command = (
+            f"/{cmd.name} {' '.join(session.args)}".rstrip() if session.args else f"/{cmd.name}"
+        )
         return response

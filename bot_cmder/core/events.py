@@ -62,6 +62,16 @@ class OutgoingResponse:
     # the Risk enum to avoid a circular import core.events -> registry.
     risk: str | None = None
     command_name: str | None = None
+    # Override for "what command should be echoed back to the user in
+    # chat history?". Set ONLY when the executed command differs from
+    # what the user literally typed — currently just /otp resume,
+    # where the user typed `/otp 123456` but what actually ran is the
+    # PRIVILEGED command they were authorizing (e.g. /ssh hello uptime).
+    # Without this, Slack's command-echo would render `/otp <redacted>`
+    # above an error message about a host the user never mentioned in
+    # /otp — visually disorienting.
+    # When None, adapters fall back to the IncomingMessage.text.
+    displayed_command: str | None = None
 
     @classmethod
     def text_reply(cls, text: str, reply_to: str | None = None) -> OutgoingResponse:

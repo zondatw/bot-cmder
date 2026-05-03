@@ -167,6 +167,88 @@ def test_command_echo_with_router_subcommand_args():
     assert "exit=0" in body
 
 
+# --- send() honors displayed_command override -----------------------
+
+
+@pytest.mark.asyncio
+async def test_send_uses_displayed_command_when_set(monkeypatch):
+    """Regression for the OTP-resume case: user types `/otp 123456`
+    but what actually ran is the resumed `/ssh hello uptime`. The
+    echo should show the resumed command (so the chat reads as a
+    transcript) — NOT `/otp <redacted>` above an "unknown host: hello"
+    error that mentions a host the user never typed in /otp."""
+    from datetime import datetime, timezone
+
+    captured: dict = {}
+
+    async def _fake_send(url, text, *, in_channel, replace_original=False):
+        captured["text"] = text
+
+    adapter = _adapter()
+    monkeypatch.setattr(adapter._client, "send_response", _fake_send)
+
+    msg = IncomingMessage(
+        platform=Platform.SLACK,
+        user=PlatformUser(platform=Platform.SLACK, raw_id="U0", handle=None),
+        chat_id="C0",
+        text="/otp 123456",  # what the user actually typed
+        message_id=None,
+        raw={"response_url": "https://hooks.slack.com/commands/T0/1/abc"},
+        received_at=datetime.now(timezone.utc),
+    )
+    resp = OutgoingResponse(
+        kind=ResponseKind.TEXT,
+        text="unknown host: hello (known: gce)",
+        risk="privileged",
+        command_name="ssh",
+        displayed_command="/ssh hello uptime",  # what /otp actually resumed
+    )
+    await adapter.send(msg, resp)
+    body = captured["text"]
+    # Echo shows the resumed command, not /otp.
+    assert "> `/ssh hello uptime`" in body
+    # And no `/otp` echo / no leaked OTP code.
+    assert "/otp" not in body
+    assert "123456" not in body
+    # Reply text preserved beneath the echo.
+    assert "unknown host: hello" in body
+
+
+@pytest.mark.asyncio
+async def test_send_falls_back_to_msg_text_without_displayed_command(monkeypatch):
+    """Normal (non-OTP-resume) flow: dispatcher doesn't set displayed_command,
+    adapter echoes literally what the user typed."""
+    from datetime import datetime, timezone
+
+    captured: dict = {}
+
+    async def _fake_send(url, text, *, in_channel, replace_original=False):
+        captured["text"] = text
+
+    adapter = _adapter()
+    monkeypatch.setattr(adapter._client, "send_response", _fake_send)
+
+    msg = IncomingMessage(
+        platform=Platform.SLACK,
+        user=PlatformUser(platform=Platform.SLACK, raw_id="U0", handle=None),
+        chat_id="C0",
+        text="/health",
+        message_id=None,
+        raw={"response_url": "https://hooks.slack.com/commands/T0/1/abc"},
+        received_at=datetime.now(timezone.utc),
+    )
+    resp = OutgoingResponse(
+        kind=ResponseKind.TEXT,
+        text="api: OK",
+        risk="safe",
+        command_name="health",
+        # displayed_command not set — adapter should fall back
+    )
+    await adapter.send(msg, resp)
+    assert "> `/health`" in captured["text"]
+    assert "api: OK" in captured["text"]
+
+
 # --- send() integration --------------------------------------------
 
 
