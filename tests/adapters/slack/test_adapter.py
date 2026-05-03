@@ -130,6 +130,43 @@ def test_visibility_unknown_risk_falls_back_to_ephemeral():
     assert adapter._resolve_in_channel(_resp(risk=None, command_name=None)) is False
 
 
+# --- command echo + redaction ---------------------------------------
+
+
+def test_command_echo_prepends_typed_text_to_reply():
+    """Slack hides slash commands from channel history; echo prevents
+    bot-soliloquy reads of past replies."""
+    body = SlackAdapter._with_command_echo("/help", "Available commands: ...")
+    assert body.startswith("> `/help`")
+    assert "Available commands" in body
+    # Blank line between echo and reply for readability
+    assert "`/help`\n\n" in body
+
+
+def test_command_echo_redacts_otp_code():
+    """OTP codes must never land in chat history — Slack's ephemeral
+    messages persist, and a future in_channel visibility override
+    would broadcast the code to the channel."""
+    body = SlackAdapter._with_command_echo("/otp 123456", "ok, restarted api")
+    assert "123456" not in body
+    assert "/otp <redacted>" in body
+    assert "ok, restarted api" in body
+
+
+def test_command_echo_with_empty_reply_still_shows_command():
+    """A handler that returned empty text still benefits from echo,
+    so the user can see their own command went somewhere."""
+    body = SlackAdapter._with_command_echo("/whoami", "")
+    assert body == "> `/whoami`"
+
+
+def test_command_echo_with_router_subcommand_args():
+    """Multi-word commands echo verbatim — preserves --host flags etc."""
+    body = SlackAdapter._with_command_echo("/service restart hello --host gce", "$ hello restart on gce\nexit=0")
+    assert "> `/service restart hello --host gce`" in body
+    assert "exit=0" in body
+
+
 # --- send() integration --------------------------------------------
 
 

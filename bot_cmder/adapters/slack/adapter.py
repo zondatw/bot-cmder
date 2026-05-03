@@ -79,7 +79,8 @@ class SlackAdapter(PlatformAdapter):
             # quietly; the operator can still tail the audit log.
             return
         in_channel = self._resolve_in_channel(resp)
-        await self._client.send_response(response_url, resp.text, in_channel=in_channel)
+        body = self._with_command_echo(msg.text, resp.text)
+        await self._client.send_response(response_url, body, in_channel=in_channel)
 
     def _resolve_in_channel(self, resp: OutgoingResponse) -> bool:
         """Apply SlackConfig.reply_visibility + per-command override.
@@ -110,3 +111,39 @@ class SlackAdapter(PlatformAdapter):
         if resp.risk == "safe":
             return True
         return False
+
+    @staticmethod
+    def _with_command_echo(typed: str, reply: str) -> str:
+        """Prepend the user's typed command to the reply.
+
+        Slack — unlike Telegram and Discord — does NOT echo slash
+        commands into channel history, even to the invoker. Without
+        this, scrolling back through chat reads as bot soliloquy:
+        you see "unknown host: hello" with no context for what was
+        asked. Render the command in a blockquote + inline-code so
+        it reads as "this is what was typed":
+
+            > `/service restart hello --host gce`
+
+            unknown host: hello (known: gce)
+
+        Sensitive args get redacted — currently `/otp <code>` only,
+        which we never want surfaced into chat history (even ephemeral
+        Slack messages persist for a while, and a future visibility
+        override could flip /otp to in_channel and broadcast the code).
+        """
+        echo = _redact_sensitive(typed)
+        if not reply:
+            return f"> `{echo}`"
+        return f"> `{echo}`\n\n{reply}"
+
+
+def _redact_sensitive(typed: str) -> str:
+    """Replace OTP codes with a placeholder. Other commands pass through.
+
+    Detect-by-prefix is enough for the current command set. Add new
+    rules here if a future builtin takes a sensitive positional arg.
+    """
+    if typed.startswith("/otp "):
+        return "/otp <redacted>"
+    return typed
