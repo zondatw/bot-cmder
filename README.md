@@ -243,39 +243,35 @@ acl:
 
 ## Discord setup (Phase 4)
 
+Quick path:
+
 ```shell
-# 1. https://discord.com/developers/applications → New Application.
-#    Copy the Application ID (URL), Public Key (General Info tab),
-#    and bot token (Bot tab → Reset Token).
-echo "DISCORD_APPLICATION_ID=..." >> .env
-echo "DISCORD_PUBLIC_KEY=..."     >> .env  # hex string
-echo "DISCORD_BOT_TOKEN=..."      >> .env
-# Optional but recommended for dev — guild-scoped slash commands
-# propagate instantly instead of taking ~1h:
-echo "DISCORD_GUILD_ID=..."       >> .env
+# 1. dev portal → New Application; grab the four values:
+#    https://discord.com/developers/applications
+echo "DISCORD_APPLICATION_ID=..." >> .env  # General Info → Application ID
+echo "DISCORD_PUBLIC_KEY=..."     >> .env  # General Info → Public Key
+echo "DISCORD_BOT_TOKEN=..."      >> .env  # Bot → Reset Token (shown ONCE)
+echo "DISCORD_GUILD_ID=..."       >> .env  # right-click your test server → Copy Server ID
 
-# 2. On the application page → "OAuth2 → URL Generator", pick scopes
-#    `bot` and `applications.commands`. Open the generated URL to
-#    invite the bot to a guild (or DM).
+# 2. OAuth2 → URL Generator → check `bot` + `applications.commands`,
+#    open the generated URL, invite the bot to your test server.
 
-# 3. Configure the Interactions Endpoint URL.
-#    Discord posts each slash command to this URL. Use the same
-#    cloudflared / ngrok tunnel the Telegram setup already uses:
-#    https://<your-tunnel>/webhooks/discord
-#    Paste it into "Interactions Endpoint URL" on the application
-#    page; Discord probes it with a signed PING and refuses to
-#    save unless the bot answers correctly. Make sure `just dev` is
-#    running first.
+# 3. dev portal → General Info → Interactions Endpoint URL:
+#    https://<your-ngrok>.ngrok-free.app/webhooks/discord
+#    (just dev must be running first)
 
-# 4. Push the slash command schema (registry → Discord manifest).
+# 4. Push the slash command schema:
 just register-discord
-# Output: "Discord accepted N command(s)."
 
-# 5. In Discord (DM with the bot or in the invited guild):
+# 5. In Discord:
 /help
 /service args:"restart api --host gce"
 /otp code:"123456"
 ```
+
+For the **full walkthrough** — where each value comes from in the dev
+portal, OAuth2 permission discussion, troubleshooting table, and
+secret rotation steps — see [`docs/discord-setup.md`](docs/discord-setup.md).
 
 ## Tests
 
