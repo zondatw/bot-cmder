@@ -45,13 +45,13 @@ fix:
     uv run ruff check --fix .
     uv run black --line-length 120 .
 
-# Echo the env settings used by the bot.
+# Echo the env settings used by the bot. Secrets print as <set>/
+# <unset> only — the value itself is never displayed (an earlier
+# bash version of this leaked tokens because `${V:+x}${V:-y}`
+# evaluates BOTH branches when V is set). Implemented in python so
+# the secret/non-secret split is maintained in one place.
 show-env-settings:
-    @echo "--- .env settings ---"
-    @echo "TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-<unset>}"
-    @echo "TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:+<set>}"
-    @echo "TELEGRAM_HOOK_URL: ${TELEGRAM_HOOK_URL:-<unset>}"
-    @echo "APP_CONFIG_PATH: ${APP_CONFIG_PATH:-./config/app.yaml}"
+    @python3 scripts/show_env_settings.py
 
 # Show current Telegram webhook state — URL, pending update count,
 # last delivery error. Call this any time you suspect the webhook is
