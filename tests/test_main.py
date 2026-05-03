@@ -51,6 +51,58 @@ def test_create_app_does_not_crash_without_telegram_token():
     assert "/webhooks/telegram" not in paths
 
 
+def test_telegram_polling_mode_skips_webhook_route(monkeypatch):
+    """When TELEGRAM_MODE=polling, the webhook endpoint must NOT be
+    mounted — the daemon owns ingestion and exposing the webhook would
+    confuse operators (and risk Telegram retrying queued updates if
+    they re-set the URL)."""
+    from bot_cmder.config.settings import get_settings
+    from bot_cmder.main import create_app
+
+    monkeypatch.setenv("TELEGRAM_TOKEN", "fake")
+    monkeypatch.setenv("TELEGRAM_MODE", "polling")
+    get_settings.cache_clear()
+
+    app = create_app()
+    paths = {getattr(r, "path", None) for r in app.routes}
+    assert "/healthz" in paths
+    # Polling mode = no webhook route. The daemon only spins up
+    # inside the lifespan context (not exercised here), but route
+    # presence is decided at create_app time and that's what we pin.
+    assert "/webhooks/telegram" not in paths
+
+
+def test_telegram_webhook_mode_keeps_route(monkeypatch):
+    """Default TELEGRAM_MODE=webhook (or anything that's not polling)
+    keeps the existing /webhooks/telegram surface — Phase 1 behavior
+    is preserved by the default."""
+    from bot_cmder.config.settings import get_settings
+    from bot_cmder.main import create_app
+
+    monkeypatch.setenv("TELEGRAM_TOKEN", "fake")
+    # Don't set TELEGRAM_MODE — default is "webhook"
+    monkeypatch.delenv("TELEGRAM_MODE", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    paths = {getattr(r, "path", None) for r in app.routes}
+    assert "/webhooks/telegram" in paths
+
+
+def test_invalid_telegram_mode_fails_fast(monkeypatch):
+    """Typos like TELEGRAM_MODE=poling must be rejected at startup,
+    not silently fall back to webhook (where the operator would think
+    polling was active and be confused why bot doesn't respond)."""
+    from bot_cmder.config.settings import get_settings
+    from bot_cmder.main import create_app
+
+    monkeypatch.setenv("TELEGRAM_MODE", "poling")  # typo
+    get_settings.cache_clear()
+
+    with pytest.raises(ValueError, match="TELEGRAM_MODE"):
+        create_app()
+
+
 def test_create_app_registers_every_builtin():
     """Regression: install_all() must register every Phase 1 + 2 + 3
     builtin into the registry — not silently skip ones whose install

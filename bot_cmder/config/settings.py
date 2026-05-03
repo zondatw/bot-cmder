@@ -26,6 +26,28 @@ class Settings(BaseSettings):
     telegram_token: str | None = None
     telegram_webhook_secret: str | None = None
 
+    # Phase 6a — ingestion mode for the Telegram adapter.
+    #   - "webhook" (default): bot exposes POST /webhooks/telegram and
+    #     Telegram POSTs each update there. Requires public HTTPS URL.
+    #   - "polling":  bot dials OUT to api.telegram.org and long-polls
+    #     getUpdates. No public URL needed; ideal for home labs / NAT.
+    #     The two modes are mutually exclusive in Telegram's API
+    #     (getUpdates returns 409 if a webhook is registered); the
+    #     daemon calls deleteWebhook at startup so the switch is
+    #     automatic.
+    # Anything other than "webhook" / "polling" fails fast at startup.
+    telegram_mode: str = "webhook"
+    # Long-poll wait (seconds) the daemon asks Telegram to hold the
+    # connection open. Telegram caps at 50; 25 keeps idle connections
+    # under most middleboxes' silent-drop window while still
+    # significantly reducing request volume vs short polling.
+    telegram_polling_timeout_s: int = 25
+    # When flipping to polling, drop any updates Telegram queued
+    # while a webhook was active. Useful during dev mode flapping
+    # (don't replay yesterday's tests on first start). False keeps
+    # the queued updates so a brief webhook outage doesn't lose them.
+    telegram_polling_drop_pending: bool = False
+
     app_config_path: Path = Path("./config/app.yaml")
 
     audit_path: Path | None = None
