@@ -51,6 +51,14 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - `/otp` propagates the resumed command's risk to the response so the visibility resolver treats `/otp 123456 → service_restart` reply as PRIVILEGED, not as `/otp`'s SAFE.
 - Pure stdlib HMAC + httpx — no `slack-sdk` dependency.
 
+**Phase 6a** — Telegram polling (no-domain mode)
+- `TELEGRAM_MODE=polling` flips the adapter from inbound webhook to outbound `getUpdates` long-poll. No public URL, no tunnel, no firewall ports — bot only makes outgoing HTTPS calls. Ideal for home labs / NAT / restrictive corp egress.
+- `TelegramDaemon` runs inside the FastAPI lifespan as an asyncio task, owns the offset bookkeeping, and shares the existing `Dispatcher` / OTP gate / audit logger — `/cmd` UX stays identical to webhook mode.
+- Auto-deletes any registered webhook at startup so flipping mode Just Works (no manual `deleteWebhook` step). 409 conflicts are fatal — the daemon won't silently re-delete a webhook someone re-registered, forcing the operator to pick a side.
+- Exponential backoff (1→30s) on transient errors; clean cancellation via `CancelledError` on lifespan shutdown.
+- Tunable `TELEGRAM_POLLING_TIMEOUT_S` (default 25) and `TELEGRAM_POLLING_DROP_PENDING` (default false). Full walkthrough: [`docs/telegram-polling.md`](docs/telegram-polling.md).
+- Slack Socket Mode (Phase 6b) and Discord Gateway (Phase 6c) bring the same no-domain capability to the other two platforms.
+
 ## Setup
 
 Requires Python 3.10+ and [`uv`](https://github.com/astral-sh/uv).
@@ -92,6 +100,26 @@ uv run python server.py
 ```
 
 Local dev binds `127.0.0.1:47823` by default (intentionally uncommon to avoid clashing with other services on 8000 / 8080). Override with `BIND_HOST`, `BIND_PORT`, or `RELOAD=1` for autoreload.
+
+### No public URL? Use polling mode (Phase 6a)
+
+If your network won't let you expose `https://...` to the internet
+(home lab, NAT, restrictive corp egress), set `TELEGRAM_MODE=polling`
+in `.env` — the bot will dial outbound to `api.telegram.org` and
+long-poll for updates instead of waiting for inbound webhook POSTs.
+Same dispatcher, same `/cmd` UX, same audit log; no tunnel needed.
+
+```shell
+echo "TELEGRAM_MODE=polling" >> .env
+uv run python server.py
+# Logs: "telegram adapter mounted (mode=polling)"
+```
+
+Full walkthrough + trade-offs + troubleshooting:
+[`docs/telegram-polling.md`](docs/telegram-polling.md).
+
+(Slack Socket Mode and Discord Gateway alternatives land in Phase 6b
+and 6c respectively.)
 
 ## Justfile shortcuts
 
