@@ -1,0 +1,41 @@
+# Keeps deps and Action versions fresh by opening one PR per upgrade.
+# Each PR runs through CI like any other change, so you only have to
+# look at green/red instead of remembering when you last ran
+# `uv sync --upgrade`.
+#
+# Cadence rationale:
+#   - "weekly" not "daily": daily floods the inbox; weekly batches
+#     enough churn to be worth reviewing without going stale.
+#   - Caps at 5 open PRs per ecosystem so a bad upstream week
+#     (e.g. 20 actions get patches at once) doesn't bury everything.
+
+version: 2
+
+updates:
+  # GitHub Actions used in .github/workflows/*.yml — pins like
+  # actions/checkout@v4 will get bumped to v5 etc.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+
+  # Python deps tracked via pyproject.toml + uv.lock. Dependabot's
+  # `pip` ecosystem reads pyproject and updates uv.lock alongside it
+  # (it has uv support since late 2024).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    # Group all dev-only updates into ONE PR per week — they rarely
+    # need individual scrutiny (it's just lint/test tooling).
+    groups:
+      dev-tools:
+        dependency-type: "development"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
