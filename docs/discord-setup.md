@@ -161,9 +161,21 @@ This is what makes Discord post to your bot.
    https://<your-ngrok-domain>.ngrok-free.app/webhooks/discord
    ```
 
-2. Dev portal → **General Information** → "Interactions Endpoint URL"
+2. Sanity-check reachability **before** pasting into Discord (saves
+   you a confusing "save fails" round-trip):
+
+   ```shell
+   # Both responses prove the route is mounted and the signature
+   # gate is active — Discord will be happy on Save.
+   curl -s     https://<your-ngrok-domain>/webhooks/discord
+   # → {"detail":"Method Not Allowed"}    (GET hits the route, POST-only)
+   curl -sX POST https://<your-ngrok-domain>/webhooks/discord
+   # → {"detail":"missing signature headers"}    (signature verify active)
+   ```
+
+3. Dev portal → **General Information** → "Interactions Endpoint URL"
    textbox.
-3. Paste the URL → **Save Changes**.
+4. Paste the URL → **Save Changes**.
 
 Discord immediately probes the endpoint with a signed PING. If signing
 verification fails, the page refuses to save with a red error. When it
@@ -255,12 +267,155 @@ Each step shows up in `var/audit.jsonl` — same shape as Telegram, with
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| "Interactions Endpoint URL" save fails with red error | tunnel down / wrong path / `DISCORD_PUBLIC_KEY` mismatch / bot crashed | `just dev` running? check ngrok URL is `/webhooks/discord` not `/webhooks/telegram`; copy `DISCORD_PUBLIC_KEY` again from General Information; test `curl https://<tunnel>/webhooks/discord` returns `{"detail":"missing signature headers"}` (proves bot reachable) |
+| "Interactions Endpoint URL" save fails with red error | tunnel down / wrong path / `DISCORD_PUBLIC_KEY` mismatch / bot crashed | `just dev` running? check ngrok URL is `/webhooks/discord` not `/webhooks/telegram`; copy `DISCORD_PUBLIC_KEY` again from General Information; the two `curl` commands in [§4 step 2](#4-set-the-interactions-endpoint-url) should both succeed |
+| `curl GET /webhooks/discord` returns `Method Not Allowed` | **not a problem** — the route is POST-only by design | this 405 actually proves the route is mounted; pair it with the POST `curl` to confirm signature verify is active |
 | `just register-discord` returns 401 | `DISCORD_BOT_TOKEN` is stale or wrong | dev portal → Bot → Reset Token, update `.env`, restart `just dev` |
+| `just register-discord` says "Pushing globally" when you wanted guild-scoped | `DISCORD_GUILD_ID` not in `.env` AND no `--guild` flag | set the env var or pass `--guild=<id>` — see [§2c](#2c-discord_guild_id-optional-recommended-for-dev) for precedence |
 | `/help` doesn't appear in Discord's autocomplete | commands registered globally (~1h delay) OR registered to a different guild | set `DISCORD_GUILD_ID` to your test server in `.env` (or pass `--guild=<id>`) and re-run `just register-discord` |
-| Bot replies "forbidden" to every command | the user's `discord:<id>` isn't in `config/app.yaml` users.aliases | add it (`/whoami` shows the norm_id you need) |
+| Discord shows "該申請未受回應" / "This interaction failed" 3 seconds after a command | the bot didn't respond within the 3s defer window | `just dev` actually running? tunnel alive? re-run the two `curl` checks in [§4 step 2](#4-set-the-interactions-endpoint-url) |
+| Bot replies "forbidden" to **every** command (including `/help` `/whoami`) | your `discord:<id>` isn't in `config/app.yaml` users.aliases | see [Gotcha 1](#common-acl--totp-gotchas) below |
+| Bot replies "forbidden" to **PRIVILEGED** commands only (SAFE ones work) | `acl.commands` doesn't grant the role for the synthetic command name | see [Gotcha 2](#common-acl--totp-gotchas) below |
+| `/otp` from Discord rejected even though Telegram OTP works | TOTP is enrolled per-norm_id, not per-user | see [Gotcha 3](#common-acl--totp-gotchas) below |
+| `/kubectl args:"version --client"` → "subcommand 'version' not in allowlist" | second-layer kubectl whitelist refused | see [Gotcha 4](#common-acl--totp-gotchas) below |
 | `/service restart …` never returns a real reply, just silent | background task hit an exception | `tail -f` the `just dev` terminal output, check audit.jsonl, often an SSH connect / known_hosts issue |
-| Discord shows "This interaction failed" 3 seconds after a command | the bot didn't respond within the 3s defer window | check `just dev` is actually running and the tunnel is alive; `curl` the endpoint to verify |
+
+---
+
+## Common ACL / TOTP gotchas
+
+These are the four bumps everyone hits the first time they wire up
+Discord (or any second platform). All four are config-only — no code
+change needed.
+
+### Gotcha 1: `discord:<id>` not in users.aliases → "forbidden" to everything
+
+**Symptom**: even `/help` (SAFE) replies `forbidden`.
+
+**Root cause**: ACL flow is `parse → resolve user → check`. If the
+caller's `norm_id` doesn't map to any `users[]` entry, no role is
+attached, so `default_allow_safe` doesn't match either.
+
+**Diagnosis**:
+
+```shell
+tail -n 5 var/audit.jsonl | jq -c 'select(.event=="AUTH_DENIED")'
+# Look at the "user" field — that's the discord:<id> you need to add.
+```
+
+**Fix**: paste it into your existing `users[]` entry's aliases
+(same row as your Telegram alias — keep one canonical user with
+multiple platform handles):
+
+```yaml
+users:
+  - id: zonda
+    aliases:
+      - "telegram:1234567890"
+      - "discord:1111111111111111111"   # ← add
+    role: sre
+```
+
+`just dev` autoreloads on save (when `RELOAD=1`); no restart needed.
+
+### Gotcha 2: PRIVILEGED command not in `acl.commands` → "forbidden" without OTP prompt
+
+**Symptom**: SAFE commands (`/help`, `/whoami`, `/service info`,
+`/service sysinfo`) work, but `/service args:"restart hello --host gce"`
+replies `forbidden` and **never offers an OTP prompt**.
+
+**Root cause**: PRIVILEGED commands default-deny. They only become
+callable when explicitly granted in `acl.commands`. SAFE commands fall
+back to `default_allow_safe`, which is why bare `/help` works while
+`/service_restart` doesn't.
+
+**Diagnosis**:
+
+```shell
+tail -n 5 var/audit.jsonl | jq -c 'select(.event=="AUTH_DENIED")'
+# {"event":"AUTH_DENIED","command":"service_restart","user":"discord:..."}
+# command field is the synthetic name dispatcher checks against acl.commands.
+```
+
+**Fix**: add the synthetic name (router_subcommand, with underscore)
+to `config/app.yaml`:
+
+```yaml
+acl:
+  default_allow_safe: ["role:sre", "role:viewer"]
+  commands:
+    kubectl:         ["role:sre"]
+    runbook_run:     ["role:sre"]
+    ssh:             ["role:sre"]
+    service_restart: ["role:sre"]   # ← add
+    service_logs:    ["role:sre"]   # ← add (next thing you'll hit)
+```
+
+> **Note**: this is identical between Telegram and Discord. If you
+> ever see "Telegram works, Discord doesn't" for the same command,
+> 99% of the time the Telegram call you remember was actually a SAFE
+> action (`service_status` / `service_sysinfo`), not the privileged
+> one. Both adapters share the same dispatcher and ACL.
+
+### Gotcha 3: TOTP secret is per-platform — enroll twice
+
+**Symptom**: Telegram `/otp` works, but Discord `/otp` says the code
+is invalid (or there's no enrollment).
+
+**Root cause**: `TOTPVerifier.verify(ctx.user.norm_id, code)` looks
+up the secret keyed by `norm_id` (`telegram:111`, `discord:945...`),
+not by canonical user id. Aliasing in `users[]` is for ACL only.
+
+**Diagnosis**:
+
+```shell
+just list-totp
+# Should list every norm_id that has a stored secret. If your
+# discord:<id> isn't there, /otp can't possibly succeed.
+```
+
+**Fix**: enroll a separate TOTP secret per platform, scan the QR /
+URI as a **new entry** in your authenticator app:
+
+```shell
+just enroll-totp discord:1111111111111111111
+# Prints an otpauth:// URI — paste into Authy / 1Password / etc.
+```
+
+You'll end up with two authenticator entries
+(`bot-cmder:telegram:1234567890` + `bot-cmder:discord:1111111111111111111`)
+showing **different** 6-digit codes at any given moment. Use the one
+that matches the platform you're invoking `/otp` from.
+
+> Future hardening (Phase 6 candidate): resolve `norm_id → canonical
+> user id` at lookup time so one enrollment covers all aliases.
+> Requires a `secret_store.py` schema migration.
+
+### Gotcha 4: `kubectl` has its own subcommand allowlist on top of ACL
+
+**Symptom**: OTP succeeds, kubectl runs, but reply is
+`subcommand 'version' not in allowlist: get, describe, logs, rollout, scale, top`.
+
+**Root cause**: defense in depth — even after ACL grants `kubectl`
+and OTP passes, the handler checks the first positional arg against
+`config/app.yaml` `kubectl.allowed_subcommands`. The default is
+read-only diagnostics (no `apply` / `delete` / `edit` / `version`).
+
+**Fix options**:
+
+- **Use an allowed subcommand** for smoke testing — `/kubectl args:"get nodes"`
+  exercises the whole path including a real API call, much more
+  meaningful than `version --client`.
+- **Add to allowlist** if you genuinely need it:
+
+  ```yaml
+  kubectl:
+    kubeconfig: /home/bot/.kube/config
+    allowed_subcommands: [get, describe, logs, rollout, scale, top, version]
+  ```
+
+  Be conservative — adding `apply` or `delete` here turns the bot into
+  a cluster-modifying tool, which is fine if intentional but a big
+  blast-radius increase.
 
 ---
 

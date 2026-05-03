@@ -13,15 +13,25 @@ import argparse
 
 import pytest
 
-from bot_cmder.config.settings import get_settings
+from bot_cmder.config.settings import Settings, get_settings
 from scripts.register_discord_commands import _resolve_guild, main
 
 
 @pytest.fixture(autouse=True)
-def _clear_settings_cache():
-    # `get_settings()` is lru-cached; bust it so monkeypatched env vars
-    # take effect for each test.
+def _isolated_settings(monkeypatch):
+    """Make `get_settings()` ignore the repo's on-disk `.env`.
+
+    Without this, a real value in `.env` (e.g. the dev guild ID) bleeds
+    into tests and `monkeypatch.delenv` can't overcome it — pydantic-
+    settings re-reads `.env` after env vars. Bypass by stubbing
+    `get_settings` with one that constructs `Settings(_env_file=None)`,
+    so only os.environ (which monkeypatch CAN control) feeds the value.
+    """
     get_settings.cache_clear()
+    monkeypatch.setattr(
+        "scripts.register_discord_commands.get_settings",
+        lambda: Settings(_env_file=None),
+    )
     yield
     get_settings.cache_clear()
 
