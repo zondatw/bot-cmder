@@ -31,7 +31,14 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - `/runbook` is also a router with `list` (SAFE) and `run <name> [args...]` (PRIVILEGED).
 - `/ssh <host> <cmd...>` (PRIVILEGED) — escape hatch for ad-hoc commands; refused unless the joined command fully matches at least one regex in the host's `allowed_commands`.
 
-The Discord / Slack adapters arrive in subsequent phases.
+**Phase 4** — Discord adapter
+- `POST /webhooks/discord` with PyNaCl Ed25519 signature verification (Discord refuses to onboard endpoints that don't sign-check).
+- PING (type 1) → answered inline; APPLICATION_COMMAND (type 2) → defer (`type: 5`) immediately, run dispatch in a `BackgroundTask`, then PATCH `@original` via the per-interaction webhook URL. Honors Discord's 3-second initial-response cap even for slow handlers (SSH, OTP gate).
+- `DiscordClient` handles both deferred follow-ups (no auth — interaction token IS the capability) and slash command registration (bot token).
+- `scripts/register_discord_commands.py` (`just register-discord`) PUT-replaces the slash command schema. Builds the manifest from the live registry so /service action subcommands derived from yaml show up in Discord's autocomplete.
+- Slash commands are flat: each Command and Router gets one top-level `/cmd` with a single STRING `args` option (or `code` for `/otp`). The adapter recombines `/<cmd> <args>` back into the same text-shaped IncomingMessage Telegram produces — same dispatch flow on both platforms.
+
+The Slack adapter arrives in Phase 5.
 
 ## Setup
 
@@ -89,6 +96,7 @@ just lint                             # ruff + black --check
 just show-env-settings                # echo env vars
 just set-telegram-bot-webhook         # POST setWebhook to Telegram (manual; tunnel does this for you)
 just gen-master-key                   # generate a fresh BOT_CMDER_MASTER_KEY for .env
+just register-discord                 # push slash command schema to Discord (Phase 4)
 just enroll-totp <user>               # enroll a user for TOTP (e.g. telegram:111)
 just list-totp                        # list TOTP-enrolled users
 just revoke-totp <user>               # drop a user's TOTP enrollment
@@ -232,6 +240,43 @@ acl:
   commands:
     service_drain: ["role:sre"]
 ```
+
+## Discord setup (Phase 4)
+
+Quick path:
+
+```shell
+# 1. dev portal → New Application; grab the values:
+#    https://discord.com/developers/applications
+echo "DISCORD_APPLICATION_ID=..." >> .env  # General Info → Application ID
+echo "DISCORD_PUBLIC_KEY=..."     >> .env  # General Info → Public Key
+echo "DISCORD_BOT_TOKEN=..."      >> .env  # Bot → Reset Token (shown ONCE)
+# Optional but recommended for dev (instant slash command propagation):
+# right-click your test server → Copy Server ID (Developer Mode must
+# be on in client Settings → Advanced).
+echo "DISCORD_GUILD_ID=..."       >> .env
+
+# 2. OAuth2 → URL Generator → check `bot` + `applications.commands`,
+#    open the generated URL, invite the bot to your test server.
+
+# 3. dev portal → General Info → Interactions Endpoint URL:
+#    https://<your-ngrok>.ngrok-free.app/webhooks/discord
+#    (just dev must be running first)
+
+# 4. Push the slash command schema. With DISCORD_GUILD_ID set, this
+#    scopes to your test server (instant propagation). For prod, run
+#    `just register-discord --global` to force a global push.
+just register-discord
+
+# 5. In Discord:
+/help
+/service args:"restart api --host gce"
+/otp code:"123456"
+```
+
+For the **full walkthrough** — where each value comes from in the dev
+portal, OAuth2 permission discussion, troubleshooting table, and
+secret rotation steps — see [`docs/discord-setup.md`](docs/discord-setup.md).
 
 ## Tests
 
