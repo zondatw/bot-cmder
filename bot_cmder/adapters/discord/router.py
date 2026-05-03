@@ -31,6 +31,7 @@ from bot_cmder.adapters.discord.adapter import DiscordAdapter
 from bot_cmder.adapters.discord.schemas import Interaction, InteractionType
 from bot_cmder.core.dispatcher import Dispatcher
 from bot_cmder.core.events import IncomingMessage
+from bot_cmder.core.redact import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ def make_router(
             "recv  %-22s chat=%s text=%r",
             msg.user.norm_id,
             msg.chat_id,
-            msg.text,
+            redact_text(msg.text),
         )
         background.add_task(_process, adapter, dispatcher, msg)
         return {"type": 5}

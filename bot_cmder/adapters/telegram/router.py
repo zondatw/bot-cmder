@@ -9,6 +9,7 @@ from bot_cmder.adapters.telegram.adapter import TelegramAdapter
 from bot_cmder.adapters.telegram.schemas import TelegramUpdate
 from bot_cmder.core.dispatcher import Dispatcher
 from bot_cmder.core.events import IncomingMessage
+from bot_cmder.core.redact import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ def make_router(
 
 
 async def _process(adapter: TelegramAdapter, dispatcher: Dispatcher, msg: IncomingMessage) -> None:
-    logger.info("recv  %-22s chat=%s text=%r", msg.user.norm_id, msg.chat_id, msg.text)
+    logger.info("recv  %-22s chat=%s text=%r", msg.user.norm_id, msg.chat_id, redact_text(msg.text))
     try:
         resp = await dispatcher.dispatch(msg)
         if resp is None:

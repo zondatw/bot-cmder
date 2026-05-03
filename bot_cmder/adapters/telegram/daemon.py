@@ -53,6 +53,7 @@ from bot_cmder.adapters.telegram.client import TelegramClient
 from bot_cmder.adapters.telegram.schemas import TelegramUpdate
 from bot_cmder.core.dispatcher import Dispatcher
 from bot_cmder.core.events import IncomingMessage
+from bot_cmder.core.redact import redact_text
 
 if TYPE_CHECKING:
     pass
@@ -188,7 +189,7 @@ class TelegramDaemon:
         BackgroundTask: there's no 3-second response cap to honor
         when we initiated the request.
         """
-        logger.info("recv  %-22s chat=%s text=%r", msg.user.norm_id, msg.chat_id, msg.text)
+        logger.info("recv  %-22s chat=%s text=%r", msg.user.norm_id, msg.chat_id, redact_text(msg.text))
         try:
             resp = await self._dispatcher.dispatch(msg)
             if resp is None:

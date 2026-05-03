@@ -32,6 +32,7 @@ from bot_cmder.adapters.slack.schemas import SlashCommandPayload, UrlVerificatio
 from bot_cmder.adapters.slack.signing import SlackSignatureError, verify_slack_signature
 from bot_cmder.core.dispatcher import Dispatcher
 from bot_cmder.core.events import IncomingMessage
+from bot_cmder.core.redact import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,7 @@ def make_router(
             "recv  %-22s chat=%s text=%r",
             msg.user.norm_id,
             msg.chat_id,
-            msg.text,
+            redact_text(msg.text),
         )
         background.add_task(_process, adapter, dispatcher, msg)
         # Empty 200 body = Slack shows nothing immediately and waits

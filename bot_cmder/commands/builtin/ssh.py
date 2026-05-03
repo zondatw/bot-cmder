@@ -50,6 +50,7 @@ def install(
         if spec is None:
             audit.log(
                 event="SSH_UNKNOWN_HOST",
+                platform=ctx.platform.value,
                 user=ctx.user.norm_id,
                 chat=ctx.chat_id,
                 host=host_name,
@@ -61,6 +62,7 @@ def install(
         if not spec.allowed_commands:
             audit.log(
                 event="SSH_REFUSED",
+                platform=ctx.platform.value,
                 user=ctx.user.norm_id,
                 chat=ctx.chat_id,
                 host=host_name,
@@ -72,6 +74,7 @@ def install(
         if not _matches_allowlist(cmd, spec.allowed_commands):
             audit.log(
                 event="SSH_REFUSED",
+                platform=ctx.platform.value,
                 user=ctx.user.norm_id,
                 chat=ctx.chat_id,
                 host=host_name,
@@ -88,6 +91,7 @@ def install(
         )
         audit.log(
             event="SSH_EXECUTED",
+            platform=ctx.platform.value,
             user=ctx.user.norm_id,
             chat=ctx.chat_id,
             host=host_name,

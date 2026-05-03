@@ -240,6 +240,7 @@ async def _run_fan_out(
 
     audit.log(
         event="SERVICE_FANOUT",
+        platform=ctx.platform.value,
         user=ctx.user.norm_id,
         chat=ctx.chat_id,
         service=service_name,
@@ -295,6 +296,7 @@ async def _run_single_host(
     )
     audit.log(
         event="SERVICE_EXECUTED",
+        platform=ctx.platform.value,
         user=ctx.user.norm_id,
         chat=ctx.chat_id,
         service=service_name,
