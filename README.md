@@ -1,5 +1,7 @@
 # bot-cmder
 
+[![CI](https://github.com/zondatw/bot-cmder/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/zondatw/bot-cmder/actions/workflows/ci.yml)
+
 Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (Discord and Slack land in later phases) when you are away from a computer and prod has issues.
 
 ## What's in this release
