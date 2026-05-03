@@ -51,6 +51,20 @@ if ! command -v ngrok >/dev/null; then
     exit 1
 fi
 
+# Normalize NGROK_DOMAIN — accept the bare hostname (what the
+# dashboard prints) but also tolerate the full "https://host/path"
+# form people often paste by mistake. ngrok itself rejects anything
+# but the bare hostname with ERR_NGROK_9038, and double-prefixing
+# would corrupt TELEGRAM_HOOK_URL too.
+NGROK_DOMAIN="${NGROK_DOMAIN#https://}"
+NGROK_DOMAIN="${NGROK_DOMAIN#http://}"
+NGROK_DOMAIN="${NGROK_DOMAIN%%/*}"
+NGROK_DOMAIN="${NGROK_DOMAIN%.}"
+if ! [[ "$NGROK_DOMAIN" =~ ^[a-z0-9.-]+\.[a-z]{2,}$ ]]; then
+    echo "ERROR: NGROK_DOMAIN does not look like a hostname after normalization: '$NGROK_DOMAIN'" >&2
+    echo "       Set it to just the host part, e.g. NGROK_DOMAIN=foo.ngrok-free.app" >&2
+    exit 1
+fi
 URL="https://${NGROK_DOMAIN}"
 HOOK_URL="${URL}/webhooks/telegram"
 
