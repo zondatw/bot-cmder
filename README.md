@@ -302,9 +302,11 @@ echo "SLACK_BOT_TOKEN=xoxb-..."  >> .env  # OAuth & Permissions (after install)
 # 2. OAuth & Permissions → add `commands` + `chat:write` scopes →
 #    "Install to Workspace" → Allow.
 
-# 3. Slash Commands → Create New Command, ONE PER `/cmd`:
-#    /help /whoami /health /service /ssh /kubectl /runbook /otp
-#    Request URL = https://<your-tunnel>/webhooks/slack
+# 3. Generate the manifest from the live registry (single source of
+#    truth — no hand-maintained manifest file). Paste output into
+#    Slack app → Features → App Manifest → Save → accept reinstall.
+echo "SLACK_REQUEST_URL=<your-ngrok-domain>" >> .env  # or set NGROK_DOMAIN
+just register-slack > /tmp/slack-manifest.yaml
 
 # 4. (Optional) tune reply visibility in config/app.yaml:
 cat >> config/app.yaml <<'YAML'

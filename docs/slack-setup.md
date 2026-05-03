@@ -97,34 +97,53 @@ URL is the same for all of them: `https://<your-tunnel>/webhooks/slack`.
    # → {"detail":"bad signature"}         (signature gate active)
    ```
 
-3. Slack app page → **Slash Commands** → **Create New Command**.
-4. Fill in:
-   - **Command**: `/help` (start the leading slash)
-   - **Request URL**: paste the URL from step 1
-   - **Short Description**: anything (`Show available commands`)
-   - **Usage Hint**: leave blank
-   - Leave "Escape channels, users, and links sent to your app" **off**
-5. Save → repeat for every command bot-cmder exposes:
+3. **Generate the manifest** from the live registry instead of
+   hand-creating 8 separate slash commands in the UI:
+
+   ```shell
+   # Tells the script where Slack should POST. Bare hostname OK —
+   # the script appends /webhooks/slack. Falls back to NGROK_DOMAIN
+   # if you've already set that for `just tunnel-ngrok`.
+   echo "SLACK_REQUEST_URL=<your-ngrok-domain>" >> .env
+
+   just register-slack > /tmp/slack-manifest.yaml
+   ```
+
+   The script reads the registry exactly the same way `main.py` does,
+   so the manifest reflects what the running bot actually accepts —
+   add a builtin or change a description, re-run, you get the new
+   manifest. **Single source of truth: the registry.** No hand-
+   maintained manifest file to drift.
+
+4. Slack app page → **Features** → **App Manifest** tab → paste the
+   contents of `/tmp/slack-manifest.yaml` over whatever's there → click
+   **Save Changes** → Slack pops a "this will reinstall the app"
+   confirmation → **Yes**.
+
+   > Slack lacks Discord's bot-token-authed PUT API for slash
+   > commands; manifest updates require [config tokens](https://api.slack.com/authentication/config-tokens)
+   > that rotate per use. Until that friction is worth it (Phase 6+),
+   > the script just generates the manifest — paste-into-UI is one
+   > extra click vs. Discord's `just register-discord`.
+
+5. After save, the page now lists all 8 commands under **Slash Commands**:
 
    | Command | Description |
    |---|---|
    | `/help` | Show available commands |
    | `/whoami` | Show your normalized identity and role |
    | `/health` | HTTP healthcheck against configured targets |
-   | `/service` | Run predefined ops actions against configured services |
+   | `/service` | Router (status / sysinfo / restart / ...) |
    | `/ssh` | Run a remote command on a configured host |
    | `/kubectl` | Run a whitelisted kubectl subcommand |
    | `/runbook` | List and run pre-deployed shell scripts |
    | `/otp` | Submit OTP code for a pending privileged command |
 
-> Slack ignores the schema beyond name + URL — there's no equivalent
-> of Discord's typed STRING options. Every command is just "send
-> whatever the user typed as `text`", which the adapter recombines
-> into the canonical `/cmd args…` form before dispatch.
-
-> Reinstall the app (**OAuth & Permissions** → **Reinstall to
-> Workspace**) after adding the FIRST `/cmd`; subsequent additions
-> don't require it.
+   > Slack ignores any structured schema beyond name + URL — there's
+   > no equivalent of Discord's typed STRING options. Every command
+   > is just "send whatever the user typed as `text`", which the
+   > adapter recombines into the canonical `/cmd args…` form before
+   > dispatch.
 
 ---
 

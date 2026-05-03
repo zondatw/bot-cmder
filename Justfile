@@ -107,3 +107,12 @@ gen-master-key:
 # without args pushes globally (~1h propagation, every guild + DMs).
 register-discord *args:
     uv run python -m scripts.register_discord_commands "$@"
+
+# Phase 5 — generate Slack app manifest YAML from the live registry.
+# Print to stdout by default; pipe to a file or use `--out file`.
+# Then paste into your Slack app → Features → App Manifest tab → Save
+# → accept the reinstall confirmation. URL is taken from
+# SLACK_REQUEST_URL env, falling back to NGROK_DOMAIN — pass
+# `--request-url <url>` to override per call.
+register-slack *args:
+    uv run python -m scripts.register_slack_commands "$@"

@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     slack_signing_secret: str | None = None
     slack_bot_token: str | None = None
 
+    # Read ONLY by scripts/register_slack_commands.py (the running bot
+    # never touches this — Slack tells the bot where the request came
+    # from per-call). Public HTTPS URL Slack should POST slash commands
+    # to. Bare hostname is fine; the script appends /webhooks/slack.
+    # Falls back to NGROK_DOMAIN if unset, so dev iteration is terse.
+    slack_request_url: str | None = None
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
