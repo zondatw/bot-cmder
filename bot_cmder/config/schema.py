@@ -126,6 +126,52 @@ class ServiceSpec(_NullableDefaults):
     actions: dict[str, str] = Field(default_factory=dict)
 
 
+class SlackConfig(_NullableDefaults):
+    """Phase 5 Slack adapter settings.
+
+    Slack's slash command flow can reply two ways:
+      - `ephemeral` — only the invoker sees it (private, default-safe)
+      - `in_channel` — the whole channel sees it (great for collaborative
+        ops: teammates can spot each other's status checks and reduce
+        "what's going on right now?" anxiety without re-asking)
+
+    `reply_visibility` is the global default; set per command via
+    `visibility_overrides`. The `by_risk` mode is the suggested middle
+    ground — diagnostic SAFE commands (`/help`, `/health`, `/service status`)
+    go to the channel so the team learns by lurking; PRIVILEGED ones
+    (`/service restart`, `/ssh`, `/kubectl`) stay private so SSH output
+    isn't broadcast.
+
+    Override keys are the synthetic command names the dispatcher sees
+    AFTER router rewrite (e.g. `service_restart`, not `service restart`).
+    Same name `audit.jsonl` records under `command:` — easy to copy.
+    """
+
+    # Default reply visibility. One of "by_risk", "in_channel",
+    # "ephemeral". `by_risk` maps SAFE → in_channel, PRIVILEGED →
+    # ephemeral. Anything outside the three is rejected at load time.
+    reply_visibility: str = "by_risk"
+
+    # Per-command visibility override. Value must be "in_channel" or
+    # "ephemeral" (no `by_risk` here — overrides resolve to one of the
+    # two final states). Unknown commands are tolerated so a yaml
+    # carried over from a removed action doesn't crash startup.
+    visibility_overrides: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_visibility_values(self) -> SlackConfig:
+        if self.reply_visibility not in {"by_risk", "in_channel", "ephemeral"}:
+            raise ValueError(
+                f"slack.reply_visibility must be one of by_risk / in_channel / ephemeral, got {self.reply_visibility!r}"
+            )
+        for cmd, mode in self.visibility_overrides.items():
+            if mode not in {"in_channel", "ephemeral"}:
+                raise ValueError(
+                    f"slack.visibility_overrides[{cmd!r}] must be 'in_channel' or 'ephemeral', got {mode!r}"
+                )
+        return self
+
+
 class SshConnectorConfig(BaseModel):
     """Phase 3 SshConnector tuning."""
 
@@ -152,6 +198,8 @@ class AppConfig(_NullableDefaults):
     hosts: dict[str, HostSpec] = Field(default_factory=dict)
     services: dict[str, ServiceSpec] = Field(default_factory=dict)
     ssh: SshConnectorConfig = Field(default_factory=SshConnectorConfig)
+    # Phase 5 — Slack adapter knobs (visibility / overrides)
+    slack: SlackConfig = Field(default_factory=SlackConfig)
 
     def role_members(self, role: str) -> set[str]:
         members: set[str] = set()
