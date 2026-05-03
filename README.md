@@ -246,11 +246,15 @@ acl:
 Quick path:
 
 ```shell
-# 1. dev portal → New Application; grab the three values:
+# 1. dev portal → New Application; grab the values:
 #    https://discord.com/developers/applications
 echo "DISCORD_APPLICATION_ID=..." >> .env  # General Info → Application ID
 echo "DISCORD_PUBLIC_KEY=..."     >> .env  # General Info → Public Key
 echo "DISCORD_BOT_TOKEN=..."      >> .env  # Bot → Reset Token (shown ONCE)
+# Optional but recommended for dev (instant slash command propagation):
+# right-click your test server → Copy Server ID (Developer Mode must
+# be on in client Settings → Advanced).
+echo "DISCORD_GUILD_ID=..."       >> .env
 
 # 2. OAuth2 → URL Generator → check `bot` + `applications.commands`,
 #    open the generated URL, invite the bot to your test server.
@@ -259,11 +263,9 @@ echo "DISCORD_BOT_TOKEN=..."      >> .env  # Bot → Reset Token (shown ONCE)
 #    https://<your-ngrok>.ngrok-free.app/webhooks/discord
 #    (just dev must be running first)
 
-# 4. Push the slash command schema. For dev, scope to one guild so
-#    updates propagate instantly (right-click server → Copy Server ID;
-#    Developer Mode must be on in client Settings → Advanced):
-just register-discord --guild=945123456789012345
-# For prod (visible in every guild + DMs, ~1h propagation):
+# 4. Push the slash command schema. With DISCORD_GUILD_ID set, this
+#    scopes to your test server (instant propagation). For prod, run
+#    `just register-discord --global` to force a global push.
 just register-discord
 
 # 5. In Discord:

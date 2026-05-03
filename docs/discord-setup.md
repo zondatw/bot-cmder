@@ -30,12 +30,11 @@ points at exactly where.
 | `DISCORD_APPLICATION_ID` | **General Information** → "Application ID" (or the URL of the app page) | no | ✅ |
 | `DISCORD_PUBLIC_KEY` | **General Information** → "Public Key" (64-char hex) | no | ✅ |
 | `DISCORD_BOT_TOKEN` | **Bot** → "Reset Token" (see below) | **yes** | ✅ |
+| `DISCORD_GUILD_ID` | Discord client (not dev portal) — see step 2c | no | optional, recommended for dev |
 
-> Note: there used to be a `DISCORD_GUILD_ID` env var here, but guild
-> scoping is a one-shot registration-time concern (the running bot
-> doesn't care), so it now lives as a CLI flag on the register
-> script — see [§2c](#2c-guild-scoping-cli-flag-optional-recommended-for-dev)
-> below.
+> `DISCORD_GUILD_ID` is read **only** by `scripts/register_discord_commands.py`
+> (the running bot never touches it). The `--guild=<id>` and `--global` CLI
+> flags on that script can override the env value per call — see [§2c](#2c-discord_guild_id-optional-recommended-for-dev) and [§5](#5-register-the-slash-command-schema).
 
 ### 2a. `DISCORD_APPLICATION_ID` and `DISCORD_PUBLIC_KEY`
 
@@ -71,29 +70,43 @@ secret signing key never leaves Discord's servers).
 >   running bot using the old token will go offline; you'll need to
 >   restart it after updating `.env`.
 
-### 2c. Guild scoping (`--guild` CLI flag, optional, recommended for dev)
+### 2c. `DISCORD_GUILD_ID` (optional, recommended for dev)
 
-Slash command registration can target one server only — updates
-propagate **instantly** instead of taking ~1 hour globally. This is a
-flag on the register script, **not** an env var (the running bot
-doesn't care which guild it's in).
+Slash command registration can target one server — updates propagate
+**instantly** instead of taking ~1 hour globally. Set this env var
+once and `just register-discord` keeps using it; the CLI flags on
+the register script let you override per call without touching `.env`.
 
-To get the guild ID:
+To get the value:
 
 1. In the Discord client (not the dev portal): **Settings** (gear) →
    **Advanced** → enable **"Developer Mode"**.
 2. Right-click the server icon in the left sidebar → **"Copy Server
    ID"**.
-3. Pass it to the register script (see [§5](#5-register-the-slash-command-schema)):
+3. Paste into `.env`:
 
    ```shell
-   just register-discord --guild=945123456789012345
+   echo "DISCORD_GUILD_ID=945123456789012345" >> .env
    ```
 
-| | With `--guild=<id>` | Without (default) |
+> **Bot doesn't read this.** `DISCORD_GUILD_ID` lives in `.env` only
+> for ergonomics — `scripts/register_discord_commands.py` is the
+> single consumer. The running bot doesn't care which guild it's in;
+> Discord's interaction payloads carry `guild_id` per request.
+
+Precedence when running `just register-discord`:
+
+| | Effect |
+|---|---|
+| `--guild=<id>` flag | use this guild (overrides env) |
+| `--global` flag | force global push (overrides env) |
+| `DISCORD_GUILD_ID` in `.env` | use that guild (default) |
+| (none of the above) | global push |
+
+| | Guild push | Global push |
 |---|---|---|
 | Visible in | only that server | every server the bot is in + DMs |
-| Time to propagate after `register-discord` | **instant** | ~1 hour |
+| Time to propagate | **instant** | ~1 hour |
 | Recommended for | dev / local testing | production |
 
 ---
@@ -165,11 +178,15 @@ saves successfully, you've proven both:
 ## 5. Register the slash command schema
 
 ```shell
-# global push — visible everywhere, ~1h propagation (use for prod)
+# Default — uses DISCORD_GUILD_ID from .env if set (instant propagation),
+# else pushes globally (~1h propagation).
 just register-discord
 
-# guild-scoped push — visible only in one server, instant propagation (use for dev)
+# Override env, push to a specific guild for this call only:
 just register-discord --guild=945123456789012345
+
+# Override env, force global push (use for the prod release):
+just register-discord --global
 ```
 
 Builds the manifest from the live registry (every top-level Command +
@@ -240,7 +257,7 @@ Each step shows up in `var/audit.jsonl` — same shape as Telegram, with
 |---|---|---|
 | "Interactions Endpoint URL" save fails with red error | tunnel down / wrong path / `DISCORD_PUBLIC_KEY` mismatch / bot crashed | `just dev` running? check ngrok URL is `/webhooks/discord` not `/webhooks/telegram`; copy `DISCORD_PUBLIC_KEY` again from General Information; test `curl https://<tunnel>/webhooks/discord` returns `{"detail":"missing signature headers"}` (proves bot reachable) |
 | `just register-discord` returns 401 | `DISCORD_BOT_TOKEN` is stale or wrong | dev portal → Bot → Reset Token, update `.env`, restart `just dev` |
-| `/help` doesn't appear in Discord's autocomplete | commands registered globally (~1h delay) OR registered to a different guild | re-run with `just register-discord --guild=<your-server-id>` for instant propagation |
+| `/help` doesn't appear in Discord's autocomplete | commands registered globally (~1h delay) OR registered to a different guild | set `DISCORD_GUILD_ID` to your test server in `.env` (or pass `--guild=<id>`) and re-run `just register-discord` |
 | Bot replies "forbidden" to every command | the user's `discord:<id>` isn't in `config/app.yaml` users.aliases | add it (`/whoami` shows the norm_id you need) |
 | `/service restart …` never returns a real reply, just silent | background task hit an exception | `tail -f` the `just dev` terminal output, check audit.jsonl, often an SSH connect / known_hosts issue |
 | Discord shows "This interaction failed" 3 seconds after a command | the bot didn't respond within the 3s defer window | check `just dev` is actually running and the tunnel is alive; `curl` the endpoint to verify |

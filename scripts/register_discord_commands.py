@@ -6,14 +6,19 @@ existing one, etc.) so Discord's autocomplete UI matches what the
 bot can actually handle. Idempotent — Discord PUT-replaces the
 whole command list each call.
 
-Scoping (CLI flag, NOT an env var — guild scope is a registration-
-time concern, the running bot doesn't care):
+Scoping precedence (highest wins):
 
-  - default (no flag): push globally. Visible in every guild the
-    bot is in plus DMs; updates take ~1 hour to propagate.
-  - --guild=<id>: push to ONE guild. Visible only there but
-    updates propagate instantly. Use during dev when you're
-    iterating on the schema.
+  1. --guild=<id> CLI flag — explicit override for one-off pushes
+  2. --global CLI flag — force global push, ignore env
+  3. DISCORD_GUILD_ID env var — your dev-time default
+  4. (nothing set) → push globally
+
+Guild push:  visible only in that one server, updates propagate INSTANTLY.
+Global push: visible in every server the bot is in + DMs, ~1h propagation.
+
+The env var is read ONLY by this script — the running bot never
+touches it (it's a one-shot registration-time concern, not runtime
+config). Documented as such in `bot_cmder/config/settings.py`.
 
 Schema is intentionally flat: every top-level Command and every
 Router is one slash command. Commands that take user input get a
@@ -155,19 +160,47 @@ async def _push(guild_id: str | None) -> int:
     return 0
 
 
+def _resolve_guild(args: argparse.Namespace) -> str | None:
+    """Pick the guild ID per documented precedence (see module docstring).
+
+    Treats empty / whitespace-only `DISCORD_GUILD_ID` as unset —
+    `DISCORD_GUILD_ID=` in `.env` (a placeholder line) must not push
+    to a guild called "" (which would 404 noisily).
+    """
+    if args.global_:
+        return None
+    if args.guild:
+        return args.guild.strip() or None
+    env = (get_settings().discord_guild_id or "").strip()
+    return env or None
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="register-discord-commands")
-    parser.add_argument(
+    parser = argparse.ArgumentParser(
+        prog="register-discord-commands",
+        description="Push slash command schema to Discord.",
+    )
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument(
         "--guild",
         metavar="GUILD_ID",
         help=(
-            "Push to one guild instead of globally. Updates propagate instantly "
-            "(global takes ~1h). Get the ID from Discord client → Developer Mode "
-            "→ right-click server icon → Copy Server ID."
+            "Push to one guild (instant propagation). Overrides DISCORD_GUILD_ID "
+            "from .env. Get the ID from Discord client → Developer Mode → "
+            "right-click server icon → Copy Server ID."
+        ),
+    )
+    scope.add_argument(
+        "--global",
+        dest="global_",  # `global` is a Python keyword
+        action="store_true",
+        help=(
+            "Force a global push even when DISCORD_GUILD_ID is set in .env. "
+            "Use this for the prod push after dogfooding in a guild."
         ),
     )
     args = parser.parse_args(argv)
-    return asyncio.run(_push(args.guild))
+    return asyncio.run(_push(_resolve_guild(args)))
 
 
 if __name__ == "__main__":

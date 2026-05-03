@@ -21,6 +21,7 @@ _FIELDS: list[tuple[str, str, bool]] = [
     ("DISCORD_PUBLIC_KEY", "DISCORD_PUBLIC_KEY", True),
     ("DISCORD_BOT_TOKEN", "DISCORD_BOT_TOKEN", True),
     ("DISCORD_APPLICATION_ID", "DISCORD_APPLICATION_ID", False),
+    ("DISCORD_GUILD_ID", "DISCORD_GUILD_ID", False),
     # TOTP
     ("BOT_CMDER_MASTER_KEY", "BOT_CMDER_MASTER_KEY", True),
     # App
@@ -33,7 +34,7 @@ _FIELDS: list[tuple[str, str, bool]] = [
 
 _GROUPS: list[tuple[str, list[str]]] = [
     ("Telegram", ["TELEGRAM_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_HOOK_URL", "NGROK_DOMAIN"]),
-    ("Discord", ["DISCORD_PUBLIC_KEY", "DISCORD_BOT_TOKEN", "DISCORD_APPLICATION_ID"]),
+    ("Discord", ["DISCORD_PUBLIC_KEY", "DISCORD_BOT_TOKEN", "DISCORD_APPLICATION_ID", "DISCORD_GUILD_ID"]),
     ("TOTP", ["BOT_CMDER_MASTER_KEY"]),
     ("App", ["APP_CONFIG_PATH", "AUDIT_PATH", "BIND_HOST", "BIND_PORT", "RELOAD"]),
 ]

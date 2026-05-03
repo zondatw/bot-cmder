@@ -46,12 +46,16 @@ class Settings(BaseSettings):
     #     deferred replies via Discord's webhook API.
     #   - DISCORD_APPLICATION_ID: numeric application ID (URL of the
     #     application page). Part of the follow-up URL we PATCH.
-    # Guild scoping for slash command registration is a one-shot
-    # registration-time concern (not runtime) and lives as a CLI
-    # flag on `register_discord_commands.py`, not as an env var.
+    #   - DISCORD_GUILD_ID: optional, **read only by the register
+    #     script** (scripts/register_discord_commands.py), never by
+    #     the running bot. When set, slash command registration scopes
+    #     to that one guild (instant propagation, dev default); when
+    #     unset, registration goes global (~1h propagation, prod). The
+    #     `--guild=<id>` CLI flag overrides this for one-off pushes.
     discord_public_key: str | None = None
     discord_bot_token: str | None = None
     discord_application_id: str | None = None
+    discord_guild_id: str | None = None
 
 
 @lru_cache(maxsize=1)
