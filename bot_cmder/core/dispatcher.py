@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from bot_cmder.core.context import CommandContext
 from bot_cmder.core.events import IncomingMessage, OutgoingResponse, ResponseKind
 from bot_cmder.core.parser import parse
+from bot_cmder.core.redact import redact_args_for_audit
 from bot_cmder.core.registry import Command, CommandRegistry
 
 if TYPE_CHECKING:
@@ -59,6 +60,7 @@ class Dispatcher:
             if sub_cmd is None:
                 self.audit.log(
                     event="ROUTER_UNKNOWN_SUBCOMMAND",
+                    platform=msg.platform.value,
                     user=msg.user.norm_id,
                     chat=msg.chat_id,
                     router=router.name,
@@ -72,10 +74,16 @@ class Dispatcher:
             if cmd is None:
                 self.audit.log(
                     event="COMMAND_UNKNOWN",
+                    platform=msg.platform.value,
                     user=msg.user.norm_id,
                     chat=msg.chat_id,
                     command=parsed.name,
-                    args=parsed.args,
+                    # `parsed.name` is already known and untrusted args
+                    # are NOT in the sensitive-cmd registry, but route
+                    # through the redactor anyway so the policy is
+                    # enforced uniformly (e.g. someone fat-fingering
+                    # /opt instead of /otp doesn't leak by accident).
+                    args=redact_args_for_audit(parsed.name, parsed.args),
                 )
                 return OutgoingResponse.text_reply(f"unknown command: /{parsed.name}")
             command_args = parsed.args
@@ -83,10 +91,11 @@ class Dispatcher:
         if not self.acl_check(msg.user.norm_id, cmd, self.config):
             self.audit.log(
                 event="AUTH_DENIED",
+                platform=msg.platform.value,
                 user=msg.user.norm_id,
                 chat=msg.chat_id,
                 command=cmd.name,
-                args=command_args,
+                args=redact_args_for_audit(cmd.name, command_args),
             )
             return OutgoingResponse.text_reply("forbidden")
 
@@ -104,10 +113,15 @@ class Dispatcher:
             )
             self.audit.log(
                 event="OTP_REQUESTED",
+                platform=msg.platform.value,
                 user=msg.user.norm_id,
                 chat=msg.chat_id,
                 command=cmd.name,
-                args=command_args,
+                # OTP_REQUESTED logs the RESUMED command's args, not
+                # /otp's own. /otp itself bypasses the OTP gate so it
+                # never reaches this branch — but redact anyway for
+                # consistent policy enforcement.
+                args=redact_args_for_audit(cmd.name, command_args),
                 ttl_s=self.pending.ttl_s,
             )
             return OutgoingResponse.text_reply(
@@ -121,30 +135,33 @@ class Dispatcher:
         except asyncio.TimeoutError:
             self.audit.log(
                 event="COMMAND_TIMEOUT",
+                platform=msg.platform.value,
                 user=msg.user.norm_id,
                 chat=msg.chat_id,
                 command=cmd.name,
-                args=command_args,
+                args=redact_args_for_audit(cmd.name, command_args),
                 timeout_s=cmd.timeout_s,
             )
             return OutgoingResponse.text_reply(f"timeout after {cmd.timeout_s}s")
         except Exception as exc:
             self.audit.log(
                 event="HANDLER_ERROR",
+                platform=msg.platform.value,
                 user=msg.user.norm_id,
                 chat=msg.chat_id,
                 command=cmd.name,
-                args=command_args,
+                args=redact_args_for_audit(cmd.name, command_args),
                 error=repr(exc),
             )
             return OutgoingResponse(kind=ResponseKind.TEXT, text=f"error: {exc}")
 
         self.audit.log(
             event="EXECUTED",
+            platform=msg.platform.value,
             user=msg.user.norm_id,
             chat=msg.chat_id,
             command=cmd.name,
-            args=command_args,
+            args=redact_args_for_audit(cmd.name, command_args),
         )
         # Annotate so adapters (specifically Slack's reply-visibility
         # selector) know what risk class actually ran. Done here, not

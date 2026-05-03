@@ -15,6 +15,9 @@ _FIELDS: list[tuple[str, str, bool]] = [
     # Telegram
     ("TELEGRAM_TOKEN", "TELEGRAM_TOKEN", True),
     ("TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_WEBHOOK_SECRET", True),
+    ("TELEGRAM_MODE", "TELEGRAM_MODE", False),
+    ("TELEGRAM_POLLING_TIMEOUT_S", "TELEGRAM_POLLING_TIMEOUT_S", False),
+    ("TELEGRAM_POLLING_DROP_PENDING", "TELEGRAM_POLLING_DROP_PENDING", False),
     ("TELEGRAM_HOOK_URL", "TELEGRAM_HOOK_URL", False),
     ("NGROK_DOMAIN", "NGROK_DOMAIN", False),
     # Discord
@@ -22,6 +25,10 @@ _FIELDS: list[tuple[str, str, bool]] = [
     ("DISCORD_BOT_TOKEN", "DISCORD_BOT_TOKEN", True),
     ("DISCORD_APPLICATION_ID", "DISCORD_APPLICATION_ID", False),
     ("DISCORD_GUILD_ID", "DISCORD_GUILD_ID", False),
+    # Slack
+    ("SLACK_SIGNING_SECRET", "SLACK_SIGNING_SECRET", True),
+    ("SLACK_BOT_TOKEN", "SLACK_BOT_TOKEN", True),
+    ("SLACK_REQUEST_URL", "SLACK_REQUEST_URL", False),
     # TOTP
     ("BOT_CMDER_MASTER_KEY", "BOT_CMDER_MASTER_KEY", True),
     # App
@@ -33,8 +40,20 @@ _FIELDS: list[tuple[str, str, bool]] = [
 ]
 
 _GROUPS: list[tuple[str, list[str]]] = [
-    ("Telegram", ["TELEGRAM_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_HOOK_URL", "NGROK_DOMAIN"]),
+    (
+        "Telegram",
+        [
+            "TELEGRAM_TOKEN",
+            "TELEGRAM_WEBHOOK_SECRET",
+            "TELEGRAM_MODE",
+            "TELEGRAM_POLLING_TIMEOUT_S",
+            "TELEGRAM_POLLING_DROP_PENDING",
+            "TELEGRAM_HOOK_URL",
+            "NGROK_DOMAIN",
+        ],
+    ),
     ("Discord", ["DISCORD_PUBLIC_KEY", "DISCORD_BOT_TOKEN", "DISCORD_APPLICATION_ID", "DISCORD_GUILD_ID"]),
+    ("Slack", ["SLACK_SIGNING_SECRET", "SLACK_BOT_TOKEN", "SLACK_REQUEST_URL"]),
     ("TOTP", ["BOT_CMDER_MASTER_KEY"]),
     ("App", ["APP_CONFIG_PATH", "AUDIT_PATH", "BIND_HOST", "BIND_PORT", "RELOAD"]),
 ]

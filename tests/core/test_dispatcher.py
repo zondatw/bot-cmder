@@ -238,3 +238,63 @@ async def test_router_privileged_subcommand_triggers_otp_gate(router_dispatcher,
     assert audited["event"] == "OTP_REQUESTED"
     assert audited["command"] == "widget_restart"
     assert audited["args"] == ["svc-a"]
+
+
+# --- audit invariants: platform field + /otp args redaction --------
+
+
+async def test_audit_carries_platform_field_for_every_event(dispatcher, registry, make_message, audit_path):
+    """Every audit event must carry `platform` so jq filters like
+    `select(.platform == "slack")` actually work.
+
+    Regression: dogfood pass found no events had this field; my own
+    walkthroughs were instructing users to filter on a field that
+    didn't exist. This test pins it across the four common code paths
+    (executed, ACL deny, unknown command, handler error).
+    """
+    # A SAFE command — exercises the EXECUTED path
+    await dispatcher.dispatch(make_message("/ping"))
+    # Unknown command — exercises COMMAND_UNKNOWN
+    await dispatcher.dispatch(make_message("/nonexistent"))
+    # Handler crash — exercises HANDLER_ERROR
+    await dispatcher.dispatch(make_message("/boom"))
+
+    events = _read_audit(audit_path)
+    assert len(events) == 3
+    for e in events:
+        assert "platform" in e, f"audit event missing platform: {e}"
+        assert e["platform"] == "telegram"  # make_message defaults to telegram
+
+
+async def test_otp_args_never_leak_to_audit(dispatcher, registry, make_message, audit_path):
+    """The big one: /otp's args (the TOTP code, or worse, an enrollment
+    URI a user mistyped) must NEVER reach audit.jsonl in plaintext.
+
+    Defeating this redaction would defeat the whole point of the
+    Fernet-encrypted SecretStore — anyone who reads audit.jsonl could
+    extract the BASE32 secret from a leaked enrollment URI and
+    regenerate every future OTP for that user.
+    """
+    registry.register(Command(name="otp", risk=Risk.SAFE, handler=_ok_handler))
+
+    # Simulate the dogfood incident: user pastes the entire enrollment
+    # URI as the /otp arg.
+    await dispatcher.dispatch(make_message("/otp otpauth://totp/bot-cmder:u?secret=ABCDEFGHIJKLMNOP&issuer=bot-cmder"))
+    # And the normal case: a 6-digit code
+    await dispatcher.dispatch(make_message("/otp 918493"))
+
+    events = _read_audit(audit_path)
+    raw_log = audit_path.read_text()
+
+    # Hard guarantee: neither the secret material nor the OTP code
+    # appears anywhere in the audit log file (not just in args — also
+    # nowhere else by accident).
+    assert "ABCDEFGHIJKLMNOP" not in raw_log
+    assert "otpauth://" not in raw_log
+    assert "918493" not in raw_log
+
+    # The redaction placeholder is what landed instead.
+    otp_events = [e for e in events if e.get("command") == "otp"]
+    assert len(otp_events) == 2
+    for e in otp_events:
+        assert e["args"] == ["<redacted>"]

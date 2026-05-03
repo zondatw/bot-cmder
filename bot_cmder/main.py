@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -13,6 +15,7 @@ from bot_cmder.adapters.slack import SlackAdapter, SlackClient
 from bot_cmder.adapters.slack import make_router as slack_router
 from bot_cmder.adapters.telegram import TelegramAdapter, TelegramClient
 from bot_cmder.adapters.telegram import make_router as telegram_router
+from bot_cmder.adapters.telegram.daemon import TelegramDaemon
 from bot_cmder.audit.log import AuditLogger
 from bot_cmder.auth.acl import check_allowed
 from bot_cmder.auth.pending import PendingOTPSessions
@@ -101,16 +104,34 @@ def create_app() -> FastAPI:
         pending=pending,
     )
 
+    # Telegram has two ingestion modes (Phase 6a). Validate the env
+    # var here so an obvious typo (TELEGRAM_MODE=poling) fails fast
+    # at startup with a clear message instead of silently picking the
+    # default.
+    if settings.telegram_mode not in {"webhook", "polling"}:
+        raise ValueError(f"TELEGRAM_MODE must be 'webhook' or 'polling', got {settings.telegram_mode!r}")
+
     telegram_client: TelegramClient | None = None
+    telegram_adapter: TelegramAdapter | None = None
     telegram_router_obj = None
+    telegram_daemon: TelegramDaemon | None = None
     if settings.telegram_token:
         telegram_client = TelegramClient(settings.telegram_token)
         telegram_adapter = TelegramAdapter(telegram_client)
-        telegram_router_obj = telegram_router(
-            telegram_adapter,
-            dispatcher,
-            webhook_secret=settings.telegram_webhook_secret,
-        )
+        if settings.telegram_mode == "polling":
+            telegram_daemon = TelegramDaemon(
+                telegram_client,
+                telegram_adapter,
+                dispatcher,
+                long_poll_timeout_s=settings.telegram_polling_timeout_s,
+                drop_pending_on_start=settings.telegram_polling_drop_pending,
+            )
+        else:
+            telegram_router_obj = telegram_router(
+                telegram_adapter,
+                dispatcher,
+                webhook_secret=settings.telegram_webhook_secret,
+            )
 
     discord_client: DiscordClient | None = None
     discord_router_obj = None
@@ -148,9 +169,15 @@ def create_app() -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         names = ", ".join(c.name for c in registry.all())
         logger.info("commands registered: %s", names)
+        daemon_task: asyncio.Task | None = None
         if telegram_client is not None:
-            logger.info("telegram adapter mounted")
+            logger.info("telegram adapter mounted (mode=%s)", settings.telegram_mode)
             await _sync_telegram_command_menu(telegram_client, registry)
+            if telegram_daemon is not None:
+                daemon_task = asyncio.create_task(
+                    telegram_daemon.run(),
+                    name="telegram-daemon",
+                )
         else:
             logger.warning("TELEGRAM_TOKEN not set; telegram adapter disabled")
         if discord_router_obj is not None:
@@ -170,6 +197,13 @@ def create_app() -> FastAPI:
         try:
             yield
         finally:
+            # Stop the polling daemon FIRST, before closing the client
+            # it depends on, otherwise the in-flight long-poll request
+            # would error on the closed transport.
+            if daemon_task is not None:
+                daemon_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await daemon_task
             if telegram_client is not None:
                 await telegram_client.aclose()
             if discord_client is not None:

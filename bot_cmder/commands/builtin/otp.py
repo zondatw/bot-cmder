@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from bot_cmder.core.context import CommandContext
 from bot_cmder.core.events import OutgoingResponse
+from bot_cmder.core.redact import redact_args_for_audit
 from bot_cmder.core.registry import CommandRegistry, Risk, register
 
 if TYPE_CHECKING:
@@ -45,6 +46,7 @@ def install(
         if session is None:
             audit.log(
                 event="OTP_NO_PENDING",
+                platform=ctx.platform.value,
                 user=ctx.user.norm_id,
                 chat=ctx.chat_id,
             )
@@ -53,6 +55,7 @@ def install(
         if session.chat_id != ctx.chat_id or session.platform != ctx.platform:
             audit.log(
                 event="OTP_CROSS_CHAT",
+                platform=ctx.platform.value,
                 user=ctx.user.norm_id,
                 chat=ctx.chat_id,
                 command=session.command_name,
@@ -64,6 +67,7 @@ def install(
         if pending.is_expired(session):
             audit.log(
                 event="OTP_EXPIRED",
+                platform=ctx.platform.value,
                 user=ctx.user.norm_id,
                 chat=ctx.chat_id,
                 command=session.command_name,
@@ -73,6 +77,7 @@ def install(
         if not totp.verify(ctx.user.norm_id, code):
             audit.log(
                 event="OTP_INVALID",
+                platform=ctx.platform.value,
                 user=ctx.user.norm_id,
                 chat=ctx.chat_id,
                 command=session.command_name,
@@ -87,6 +92,7 @@ def install(
         if cmd is None:
             audit.log(
                 event="OTP_COMMAND_GONE",
+                platform=ctx.platform.value,
                 user=ctx.user.norm_id,
                 chat=ctx.chat_id,
                 command=session.command_name,
@@ -98,10 +104,11 @@ def install(
         except asyncio.TimeoutError:
             audit.log(
                 event="COMMAND_TIMEOUT",
+                platform=ctx.platform.value,
                 user=ctx.user.norm_id,
                 chat=ctx.chat_id,
                 command=cmd.name,
-                args=session.args,
+                args=redact_args_for_audit(cmd.name, session.args),
                 via_otp=True,
                 timeout_s=cmd.timeout_s,
             )
@@ -109,10 +116,11 @@ def install(
         except Exception as exc:
             audit.log(
                 event="HANDLER_ERROR",
+                platform=ctx.platform.value,
                 user=ctx.user.norm_id,
                 chat=ctx.chat_id,
                 command=cmd.name,
-                args=session.args,
+                args=redact_args_for_audit(cmd.name, session.args),
                 via_otp=True,
                 error=repr(exc),
             )
@@ -120,10 +128,11 @@ def install(
 
         audit.log(
             event="EXECUTED",
+            platform=ctx.platform.value,
             user=ctx.user.norm_id,
             chat=ctx.chat_id,
             command=cmd.name,
-            args=session.args,
+            args=redact_args_for_audit(cmd.name, session.args),
             via_otp=True,
         )
         # Propagate the RESUMED command's risk, not /otp's own SAFE,

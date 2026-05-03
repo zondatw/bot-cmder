@@ -30,6 +30,7 @@ from bot_cmder.adapters.base import PlatformAdapter
 from bot_cmder.adapters.slack.client import SlackClient
 from bot_cmder.adapters.slack.schemas import SlashCommandPayload
 from bot_cmder.core.events import IncomingMessage, OutgoingResponse, Platform, PlatformUser
+from bot_cmder.core.redact import redact_text
 
 if TYPE_CHECKING:
     from bot_cmder.config.schema import SlackConfig
@@ -136,18 +137,7 @@ class SlackAdapter(PlatformAdapter):
         Slack messages persist for a while, and a future visibility
         override could flip /otp to in_channel and broadcast the code).
         """
-        echo = _redact_sensitive(typed)
+        echo = redact_text(typed)
         if not reply:
             return f"> `{echo}`"
         return f"> `{echo}`\n\n{reply}"
-
-
-def _redact_sensitive(typed: str) -> str:
-    """Replace OTP codes with a placeholder. Other commands pass through.
-
-    Detect-by-prefix is enough for the current command set. Add new
-    rules here if a future builtin takes a sensitive positional arg.
-    """
-    if typed.startswith("/otp "):
-        return "/otp <redacted>"
-    return typed
