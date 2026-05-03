@@ -102,6 +102,8 @@ gen-master-key:
 
 # Phase 4 — push the slash command schema to Discord. Run after
 # editing the registry (e.g. adding a yaml action) so Discord's
-# autocomplete UI matches what the bot can actually handle.
-register-discord:
-    uv run python -m scripts.register_discord_commands
+# autocomplete UI matches what the bot can actually handle. Pass
+# `--guild=<id>` for dev (instant propagation, one server only);
+# without args pushes globally (~1h propagation, every guild + DMs).
+register-discord *args:
+    uv run python -m scripts.register_discord_commands "$@"

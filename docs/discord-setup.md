@@ -30,7 +30,12 @@ points at exactly where.
 | `DISCORD_APPLICATION_ID` | **General Information** → "Application ID" (or the URL of the app page) | no | ✅ |
 | `DISCORD_PUBLIC_KEY` | **General Information** → "Public Key" (64-char hex) | no | ✅ |
 | `DISCORD_BOT_TOKEN` | **Bot** → "Reset Token" (see below) | **yes** | ✅ |
-| `DISCORD_GUILD_ID` | Discord client (not dev portal) — see step 3 | no | optional, but recommended for dev |
+
+> Note: there used to be a `DISCORD_GUILD_ID` env var here, but guild
+> scoping is a one-shot registration-time concern (the running bot
+> doesn't care), so it now lives as a CLI flag on the register
+> script — see [§2c](#2c-guild-scoping-cli-flag-optional-recommended-for-dev)
+> below.
 
 ### 2a. `DISCORD_APPLICATION_ID` and `DISCORD_PUBLIC_KEY`
 
@@ -66,25 +71,26 @@ secret signing key never leaves Discord's servers).
 >   running bot using the old token will go offline; you'll need to
 >   restart it after updating `.env`.
 
-### 2c. `DISCORD_GUILD_ID` (optional, recommended for dev)
+### 2c. Guild scoping (`--guild` CLI flag, optional, recommended for dev)
 
-Only relevant for `just register-discord` — it scopes slash command
-registration to one server so updates propagate **instantly** instead
-of taking ~1 hour. Without it, commands push globally.
+Slash command registration can target one server only — updates
+propagate **instantly** instead of taking ~1 hour globally. This is a
+flag on the register script, **not** an env var (the running bot
+doesn't care which guild it's in).
 
-To get the value:
+To get the guild ID:
 
 1. In the Discord client (not the dev portal): **Settings** (gear) →
    **Advanced** → enable **"Developer Mode"**.
 2. Right-click the server icon in the left sidebar → **"Copy Server
    ID"**.
-3. Paste into `.env`:
+3. Pass it to the register script (see [§5](#5-register-the-slash-command-schema)):
 
    ```shell
-   echo "DISCORD_GUILD_ID=945123456789012345" >> .env
+   just register-discord --guild=945123456789012345
    ```
 
-| | Set `DISCORD_GUILD_ID` | Unset |
+| | With `--guild=<id>` | Without (default) |
 |---|---|---|
 | Visible in | only that server | every server the bot is in + DMs |
 | Time to propagate after `register-discord` | **instant** | ~1 hour |
@@ -159,7 +165,11 @@ saves successfully, you've proven both:
 ## 5. Register the slash command schema
 
 ```shell
+# global push — visible everywhere, ~1h propagation (use for prod)
 just register-discord
+
+# guild-scoped push — visible only in one server, instant propagation (use for dev)
+just register-discord --guild=945123456789012345
 ```
 
 Builds the manifest from the live registry (every top-level Command +
@@ -230,7 +240,7 @@ Each step shows up in `var/audit.jsonl` — same shape as Telegram, with
 |---|---|---|
 | "Interactions Endpoint URL" save fails with red error | tunnel down / wrong path / `DISCORD_PUBLIC_KEY` mismatch / bot crashed | `just dev` running? check ngrok URL is `/webhooks/discord` not `/webhooks/telegram`; copy `DISCORD_PUBLIC_KEY` again from General Information; test `curl https://<tunnel>/webhooks/discord` returns `{"detail":"missing signature headers"}` (proves bot reachable) |
 | `just register-discord` returns 401 | `DISCORD_BOT_TOKEN` is stale or wrong | dev portal → Bot → Reset Token, update `.env`, restart `just dev` |
-| `/help` doesn't appear in Discord's autocomplete | commands registered globally (~1h delay) OR registered to a different guild | set `DISCORD_GUILD_ID` to your test server, re-run `just register-discord` |
+| `/help` doesn't appear in Discord's autocomplete | commands registered globally (~1h delay) OR registered to a different guild | re-run with `just register-discord --guild=<your-server-id>` for instant propagation |
 | Bot replies "forbidden" to every command | the user's `discord:<id>` isn't in `config/app.yaml` users.aliases | add it (`/whoami` shows the norm_id you need) |
 | `/service restart …` never returns a real reply, just silent | background task hit an exception | `tail -f` the `just dev` terminal output, check audit.jsonl, often an SSH connect / known_hosts issue |
 | Discord shows "This interaction failed" 3 seconds after a command | the bot didn't respond within the 3s defer window | check `just dev` is actually running and the tunnel is alive; `curl` the endpoint to verify |

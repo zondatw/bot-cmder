@@ -37,7 +37,8 @@ class Settings(BaseSettings):
     # refuses to enable the OTP gate without it.
     bot_cmder_master_key: str | None = None
 
-    # Phase 4 — Discord adapter. All four are needed together:
+    # Phase 4 — Discord adapter. All three are needed together; the
+    # adapter mounts /webhooks/discord only when every value is set.
     #   - DISCORD_PUBLIC_KEY: hex-encoded Ed25519 verify key from the
     #     Discord application's "General Information" page. Used to
     #     verify every incoming interaction; no key → adapter disabled.
@@ -45,13 +46,12 @@ class Settings(BaseSettings):
     #     deferred replies via Discord's webhook API.
     #   - DISCORD_APPLICATION_ID: numeric application ID (URL of the
     #     application page). Part of the follow-up URL we PATCH.
-    #   - DISCORD_GUILD_ID: optional, scoping for slash command
-    #     registration. Set during dev so command schema updates
-    #     show up immediately (global commands take ~1h to propagate).
+    # Guild scoping for slash command registration is a one-shot
+    # registration-time concern (not runtime) and lives as a CLI
+    # flag on `register_discord_commands.py`, not as an env var.
     discord_public_key: str | None = None
     discord_bot_token: str | None = None
     discord_application_id: str | None = None
-    discord_guild_id: str | None = None
 
 
 @lru_cache(maxsize=1)

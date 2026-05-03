@@ -6,13 +6,14 @@ existing one, etc.) so Discord's autocomplete UI matches what the
 bot can actually handle. Idempotent — Discord PUT-replaces the
 whole command list each call.
 
-Scoping:
-  - DISCORD_GUILD_ID set → register to that one guild. Updates
-    propagate instantly. Use this in dev so a `service info`
-    description tweak shows up while you're still in the chat.
-  - DISCORD_GUILD_ID unset → register globally. Updates take
-    ~1 hour to propagate but the commands appear in every guild
-    the bot is in, plus DMs.
+Scoping (CLI flag, NOT an env var — guild scope is a registration-
+time concern, the running bot doesn't care):
+
+  - default (no flag): push globally. Visible in every guild the
+    bot is in plus DMs; updates take ~1 hour to propagate.
+  - --guild=<id>: push to ONE guild. Visible only there but
+    updates propagate instantly. Use during dev when you're
+    iterating on the schema.
 
 Schema is intentionally flat: every top-level Command and every
 Router is one slash command. Commands that take user input get a
@@ -24,6 +25,7 @@ stays platform-agnostic.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
 from typing import Any
@@ -105,7 +107,7 @@ def build_manifest(registry: CommandRegistry) -> list[dict[str, Any]]:
     return out
 
 
-async def _push() -> int:
+async def _push(guild_id: str | None) -> int:
     settings = get_settings()
     if not (settings.discord_application_id and settings.discord_bot_token):
         print(
@@ -142,9 +144,9 @@ async def _push() -> int:
         bot_token=settings.discord_bot_token,
         application_id=settings.discord_application_id,
     ) as client:
-        if settings.discord_guild_id:
-            print(f"\nPushing to guild {settings.discord_guild_id} (instant propagation)...")
-            response = await client.overwrite_guild_commands(settings.discord_guild_id, manifest)
+        if guild_id:
+            print(f"\nPushing to guild {guild_id} (instant propagation)...")
+            response = await client.overwrite_guild_commands(guild_id, manifest)
         else:
             print("\nPushing globally (~1h propagation)...")
             response = await client.overwrite_global_commands(manifest)
@@ -153,8 +155,19 @@ async def _push() -> int:
     return 0
 
 
-def main() -> int:
-    return asyncio.run(_push())
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="register-discord-commands")
+    parser.add_argument(
+        "--guild",
+        metavar="GUILD_ID",
+        help=(
+            "Push to one guild instead of globally. Updates propagate instantly "
+            "(global takes ~1h). Get the ID from Discord client → Developer Mode "
+            "→ right-click server icon → Copy Server ID."
+        ),
+    )
+    args = parser.parse_args(argv)
+    return asyncio.run(_push(args.guild))
 
 
 if __name__ == "__main__":
