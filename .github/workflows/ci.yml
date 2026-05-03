@@ -1,0 +1,82 @@
+# GitHub Actions CI — runs the full test suite + lint on every push to
+# main and on every PR. Mirrors what `just test` and `pre-commit run
+# --all-files` do locally so a green CI badge actually means something.
+#
+# Why two jobs (test + lint) instead of one:
+#   - Different inputs change them independently — a doc typo touches
+#     lint only, a handler change touches test only. Splitting lets
+#     you see at a glance which side broke.
+#   - They can run in parallel (faster red-line on broken PRs).
+#
+# Why matrix Python 3.10 and 3.12 (skipping 3.11):
+#   - 3.10 is the floor declared in pyproject.toml `requires-python`
+#     and `tool.ruff.target-version`. If we don't test it, "supports
+#     3.10" is a lie.
+#   - 3.12 is the latest widely-deployed stable. Catches accidental
+#     use of removed-in-3.12 APIs (e.g. distutils, asyncio.coroutine).
+#   - Skipping 3.11 halves matrix runtime; if either neighbor passes,
+#     3.11 almost always does too.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel a previous in-flight run for the same ref when a new commit
+# lands on a PR — saves CI minutes and gets the latest result faster.
+# Pushes to main are NOT cancelled (the `|| github.run_id` makes each
+# main push its own group).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && github.run_id || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Install uv (with cache)
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Pin Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync dependencies (locked)
+        # --frozen: refuse to update uv.lock; CI must use the exact
+        # versions a developer committed, otherwise "works on my
+        # machine" creeps back in via silent upgrades.
+        run: uv sync --frozen --python ${{ matrix.python-version }}
+
+      - name: Run pytest
+        run: uv run --python ${{ matrix.python-version }} pytest
+
+  lint:
+    name: pre-commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        # Single Python is enough — black / ruff / codespell are all
+        # version-agnostic for our codebase.
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run pre-commit hooks
+        # The official action handles caching of hook envs (which
+        # otherwise re-clone black + ruff repos on every run).
+        uses: pre-commit/action@v3.0.1
