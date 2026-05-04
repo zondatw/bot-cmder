@@ -105,6 +105,11 @@ jobs:
         # auto-discovered from .gitleaks.toml at the repo root.
         uses: gitleaks/gitleaks-action@v2
         env:
+          # Required by gitleaks-action@v2 for scanning pull
+          # requests (announced as a breaking change in their
+          # README). The auto-provisioned per-run token is
+          # sufficient — no PAT needed.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Quiet the marketing pop-up about gitleaks-pro that the
           # action would otherwise print on every run for OSS repos.
           GITLEAKS_NOTIFY_USER_LIST: ""
