@@ -28,3 +28,13 @@ repos:
         # tests + comments as fail-fast typo examples for env-var
         # validation (SLACK_MODE / TELEGRAM_MODE).
         args: [-L, "connexion,soket,poling"]
+  # Phase 7 — block real personal identifiers (Telegram / Discord /
+  # Slack user IDs, ngrok hostnames, Discord App IDs, etc.) from
+  # reaching the repo. Custom rules + allowlist live in
+  # .gitleaks.toml (auto-discovered by the hook). Pair-with: the CI
+  # `secret-scan` job in .github/workflows/ci.yml catches commits
+  # that bypassed this hook via `git commit --no-verify`.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks

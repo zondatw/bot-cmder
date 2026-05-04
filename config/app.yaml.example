@@ -8,11 +8,11 @@
 
 users:
   - id: zonda
-    aliases: ["telegram:111111111"]
+    aliases: ["telegram:1234567890"]   # placeholder — replace with your real norm_id
     role: sre
 
   # - id: alice
-  #   aliases: ["telegram:222222222"]
+  #   aliases: ["telegram:1234567891"]
   #   role: viewer
 
 acl:

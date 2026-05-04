@@ -90,7 +90,7 @@ Create `config/app.yaml` (see `config/app.yaml.example`):
 
 ```yaml
 users:
-  - {id: zonda, aliases: ["telegram:111111111"], role: sre}
+  - {id: zonda, aliases: ["telegram:1234567890"], role: sre}
 acl:
   default_allow_safe: ["role:sre"]
 healthcheck:
@@ -191,7 +191,7 @@ echo "BOT_CMDER_MASTER_KEY=$(just gen-master-key)" >> .env
 
 # 2. Enroll yourself; copy the otpauth:// URI into 1Password /
 #    Authy / Google Authenticator (or pipe through `qrencode`).
-just enroll-totp telegram:111111111
+just enroll-totp telegram:1234567890
 
 # 3. Restart the bot so it picks up the new key.
 just dev

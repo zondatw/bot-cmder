@@ -40,7 +40,7 @@ points at exactly where.
 4. Paste into `.env`:
 
    ```shell
-   echo "SLACK_SIGNING_SECRET=abc123def456..." >> .env
+   echo "SLACK_SIGNING_SECRET=<paste-32-char-hex-from-app-credentials>" >> .env
    ```
 
 > ⚠️ **The signing secret is a password.** It's the only thing
@@ -69,7 +69,7 @@ You'll need this **after** the OAuth install in [§3](#3-add-scopes-and-install-
    starting with `xoxb-`. Copy and paste:
 
    ```shell
-   echo "SLACK_BOT_TOKEN=xoxb-1234567890-abcdefghij" >> .env
+   echo "SLACK_BOT_TOKEN=<paste-the-xoxb-token-shown-once>" >> .env
    ```
 
 ---

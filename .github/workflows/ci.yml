@@ -80,3 +80,46 @@ jobs:
         # The official action handles caching of hook envs (which
         # otherwise re-clone black + ruff repos on every run).
         uses: pre-commit/action@v3.0.1
+
+  # Phase 7 — secret-scan is its own job (not a step in lint) because
+  # it's a security gate, not a style gate. When it fails on a PR the
+  # status check name "secret-scan" is unambiguous about what broke,
+  # and the red badge is visually distinct from "pre-commit failed
+  # because black wanted to reformat". Runs in parallel with lint
+  # and test so it doesn't add to total CI wall-clock time.
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    # gitleaks-action calls /repos/.../pulls/N/commits to enumerate
+    # the PR's commits. The default GITHUB_TOKEN doesn't grant that
+    # scope (`Resource not accessible by integration` 403 otherwise).
+    # Read-only `pull-requests: read` is the minimum that satisfies
+    # the API call without giving the action write access to anything.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v6
+        with:
+          # gitleaks needs the FULL history to scan every commit in
+          # the PR (not just the merge tip). Default checkout is a
+          # shallow clone with depth=1; override to fetch everything.
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        # Pinned action version + the same gitleaks binary version
+        # we run locally (.pre-commit-config.yaml). Config is
+        # auto-discovered from .gitleaks.toml at the repo root.
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # Required by gitleaks-action@v2 for scanning pull
+          # requests (announced as a breaking change in their
+          # README). The auto-provisioned per-run token is
+          # sufficient — no PAT needed.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Quiet the marketing pop-up about gitleaks-pro that the
+          # action would otherwise print on every run for OSS repos.
+          GITLEAKS_NOTIFY_USER_LIST: ""
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          GITLEAKS_ENABLE_SUMMARY: "true"

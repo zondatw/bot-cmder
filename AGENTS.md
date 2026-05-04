@@ -17,15 +17,17 @@ permanently in the git history (recoverable from forks even after
 
 ### What counts as a "real identifier"
 
-| Field | Example of REAL (never commit) | Example of OK (placeholder) |
+| Field | Example of REAL (partial-masked here for safety) | Example of OK (placeholder) |
 |---|---|---|
-| Telegram user ID | `telegram:236353148` | `telegram:1234567890` |
-| Discord user ID  | `discord:230258466000863232` | `discord:1111111111111111111` |
-| Slack user ID    | `slack:U0XYZ1A2B` (the maintainer's actual workspace ID) | `slack:U0123ABCD` |
-| Discord App ID   | `1500279991190032435` | `1500111111111111111` |
-| Slack App ID     | the actual A0... shown in dev portal | `A0123ABCD` |
-| Reserved ngrok hostname | `coherent-twisty-stowaway.ngrok-free.dev` | `<your-tunnel>.ngrok-free.dev` or `your-reserved-domain.ngrok-free.dev` |
+| Telegram user ID | `telegram:236...148` (real digits redacted) | `telegram:1234567890` |
+| Discord user ID  | `discord:230...232` (real snowflake redacted)  | `discord:1111111111111111111` |
+| Slack user ID    | `slack:U0X...A2B` (real workspace-local ID redacted) | `slack:U0123ABCD` |
+| Discord App ID   | `150...435` (18-19 digits, semi-public via OAuth URLs but treat as fingerprintable) | `1500111111111111111` |
+| Slack App ID     | the actual `A0...` shown in dev portal (don't reproduce here) | `A0123ABCD` |
+| Reserved ngrok hostname | a 3-word `<adjective>-<adjective>-<noun>.ngrok-free.dev` shape (don't reproduce real one) | `<your-tunnel>.ngrok-free.dev` or `your-reserved-domain.ngrok-free.dev` |
 | Bot tokens / signing secrets / TOTP secrets | any value at all | **never appears in repo** — `.env` is gitignored, `<set>`/`<unset>` only in tooling output |
+
+> Even THIS table uses partial masks for the "real" column — `telegram:236...148` not the full digits. The point of AGENTS.md is to teach the rule, not to demonstrate it by violating itself. The same partial-mask rule applies to Slack #leaks postmortems, internal incident docs, etc. Anywhere committed.
 
 ### Where the rule applies (everywhere)
 
@@ -78,6 +80,29 @@ There is no exception for "just this one example, the value is
 already public elsewhere". Even semi-public values (Discord App ID
 appears in OAuth invite URLs anyway) tied to a specific user
 constitute fingerprintable leakage.
+
+### Automated enforcement (gitleaks)
+
+Phase 7 added `gitleaks` as a pre-commit hook AND an independent
+CI job (`secret-scan`). The placeholder allowlist + custom rules
+live in [`.gitleaks.toml`](.gitleaks.toml); the operator-facing
+walkthrough (how to add rules, handle false positives, bypass
+policy) is in [`docs/git-leak-prevention.md`](docs/git-leak-prevention.md).
+
+When you (the agent) discover a NEW class of identifier the project
+should never commit:
+
+1. Add a `[[rules]]` block to `.gitleaks.toml` (with `tags` so it's
+   findable later)
+2. Add the placeholder you'll use for it to the table above AND to
+   `[allowlist].regexes` in `.gitleaks.toml`
+3. Run `just check-leaks` to confirm both the rule fires on real
+   values and passes on the placeholder
+
+The hook + CI exist precisely so the policy in this section
+doesn't depend on you remembering it. But the policy is still
+the source of truth — the hook just enforces what's already
+documented here.
 
 ---
 

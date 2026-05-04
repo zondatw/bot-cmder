@@ -45,6 +45,15 @@ fix:
     uv run ruff check --fix .
     uv run black --line-length 120 .
 
+# Phase 7 — scan for committed personal identifiers (Telegram /
+# Discord / Slack user IDs, ngrok hostnames, etc.) using gitleaks.
+# Same config (.gitleaks.toml) the pre-commit hook + CI use, so
+# `just check-leaks` exactly mirrors what would block your PR.
+# Scans the full git history; for working-tree-only use the
+# pre-commit hook (it auto-runs on commit).
+check-leaks:
+    gitleaks detect --no-banner --verbose
+
 # Echo the env settings used by the bot. Secrets print as <set>/
 # <unset> only — the value itself is never displayed (an earlier
 # bash version of this leaked tokens because `${V:+x}${V:-y}`
