@@ -34,7 +34,23 @@ In your Slack app config (https://api.slack.com/apps → your app):
    "Request URL" field — Slack enforces the mutex, so you can't
    accidentally have both modes pointing at the same app.
 
-3. Slash commands stay registered as before (the manifest from
+3. **🚨 Reinstall the app to your workspace.** Left sidebar →
+   **Install App** → **Reinstall to Workspace** → Allow.
+
+   This is the #1 dogfood gotcha: Slack's slash command routing
+   is decided at install time and does NOT auto-switch to Socket
+   Mode just because you toggled it on. Without a reinstall the
+   daemon will connect cleanly (`hello (connections=1)` log line)
+   but slash commands keep being delivered to the OLD path
+   (events webhook), so your bot sees nothing in `dev` log when
+   you type `/help` and Slack eventually shows
+   `應用程式未回應` / "application didn't respond".
+
+   The xapp- token doesn't change on reinstall, so no need to
+   restart `just dev` — the existing socket connection picks up
+   slash commands as soon as the routing table updates.
+
+4. Slash commands stay registered as before (the manifest from
    `just register-slack` is mode-independent — Socket Mode just
    changes the delivery channel).
 
@@ -137,6 +153,7 @@ production with HA: events + load balancer.
 | `slack adapter disabled` log even with SLACK_MODE=socket | SLACK_APP_TOKEN missing | set the env var |
 | `401 from apps.connections.open` log + daemon exits | bad app token / missing `connections:write` scope | regenerate token in Slack app config; also confirm scope is `connections:write` |
 | Socket connects (`hello`) but slash commands still don't arrive | Slack app's Socket Mode toggle is OFF | enable in app config — the env mode + app config must match |
+| Socket connects (`hello`) AND Socket Mode is on AND nothing arrives + Slack shows `應用程式未回應` / "application didn't respond" | **app wasn't reinstalled after enabling Socket Mode** — slash command routing is install-time-decided | Install App → Reinstall to Workspace → Allow. xapp- token unchanged so no `just dev` restart needed; routing updates server-side and the existing socket starts receiving slash commands within seconds. See [§Setup step 3](#1-slack-app-side--enable-socket-mode--generate-app-token). |
 | `no log line for /cmd` invocations | bot user not invited to the channel where `/cmd` was typed | `/invite @your-bot` in that channel; or use a DM with the bot |
 | `Apologies — there was a problem` reply in Slack | bot crashed mid-dispatch | check `just dev` stderr; usually an SSH connect / config issue |
 | Daemon reconnects every ~30 min ("graceful disconnect") | normal — Slack rebalances capacity | no action; `/cmd` invocations during reconnect briefly delayed |
