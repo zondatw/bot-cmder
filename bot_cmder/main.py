@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from bot_cmder.adapters.discord import DiscordAdapter, DiscordClient
 from bot_cmder.adapters.discord import make_router as discord_router
+from bot_cmder.adapters.discord.gateway import DiscordGatewayDaemon
 from bot_cmder.adapters.slack import SlackAdapter, SlackClient
 from bot_cmder.adapters.slack import make_router as slack_router
 from bot_cmder.adapters.slack.socket import SlackSocketDaemon
@@ -134,23 +135,47 @@ def create_app() -> FastAPI:
                 webhook_secret=settings.telegram_webhook_secret,
             )
 
+    # Discord has two ingestion modes (Phase 6c). Validate the env
+    # var here so a typo (DISCORD_MODE=getway) fails fast at startup.
+    if settings.discord_mode not in {"interactions", "gateway"}:
+        raise ValueError(f"DISCORD_MODE must be 'interactions' or 'gateway', got {settings.discord_mode!r}")
+
     discord_client: DiscordClient | None = None
+    discord_adapter: DiscordAdapter | None = None
     discord_router_obj = None
-    if settings.discord_public_key and settings.discord_bot_token and settings.discord_application_id:
-        discord_client = DiscordClient(
-            bot_token=settings.discord_bot_token,
-            application_id=settings.discord_application_id,
-        )
-        discord_adapter = DiscordAdapter(discord_client)
-        try:
-            discord_router_obj = discord_router(
-                discord_adapter,
-                dispatcher,
-                public_key_hex=settings.discord_public_key,
+    discord_gateway_daemon: DiscordGatewayDaemon | None = None
+    # Per-mode credential gating: interactions needs the public-key
+    # triad (Phase 4 contract); gateway only needs the bot token (it
+    # opens the WSS connection and reads MESSAGE_CREATE — no signing
+    # verification because frames arrive over an authenticated socket).
+    if settings.discord_mode == "interactions":
+        if settings.discord_public_key and settings.discord_bot_token and settings.discord_application_id:
+            discord_client = DiscordClient(
+                bot_token=settings.discord_bot_token,
+                application_id=settings.discord_application_id,
             )
-        except ValueError:
-            logger.exception("DISCORD_PUBLIC_KEY invalid; discord adapter disabled")
-            discord_router_obj = None
+            discord_adapter = DiscordAdapter(discord_client)
+            try:
+                discord_router_obj = discord_router(
+                    discord_adapter,
+                    dispatcher,
+                    public_key_hex=settings.discord_public_key,
+                )
+            except ValueError:
+                logger.exception("DISCORD_PUBLIC_KEY invalid; discord adapter disabled")
+                discord_router_obj = None
+    else:  # gateway mode
+        if settings.discord_bot_token and settings.discord_application_id:
+            discord_client = DiscordClient(
+                bot_token=settings.discord_bot_token,
+                application_id=settings.discord_application_id,
+            )
+            discord_adapter = DiscordAdapter(discord_client)
+            discord_gateway_daemon = DiscordGatewayDaemon(
+                bot_token=settings.discord_bot_token,
+                adapter=discord_adapter,
+                dispatcher=dispatcher,
+            )
 
     # Slack has two ingestion modes (Phase 6b). Validate at create_app
     # time so a typo (SLACK_MODE=soket) fails fast.
@@ -197,10 +222,18 @@ def create_app() -> FastAPI:
         else:
             logger.warning("TELEGRAM_TOKEN not set; telegram adapter disabled")
         if discord_router_obj is not None:
-            logger.info("discord adapter mounted (slash commands push via scripts/register_discord_commands.py)")
+            logger.info(
+                "discord adapter mounted (mode=interactions, "
+                "slash commands push via scripts/register_discord_commands.py)"
+            )
+        elif discord_gateway_daemon is not None:
+            logger.info("discord adapter mounted (mode=gateway, MESSAGE_CONTENT intent must be enabled in dev portal)")
+            bg_tasks.append(asyncio.create_task(discord_gateway_daemon.run(), name="discord-gateway-daemon"))
         else:
             logger.warning(
-                "discord adapter disabled (need DISCORD_PUBLIC_KEY + DISCORD_BOT_TOKEN + DISCORD_APPLICATION_ID)"
+                "discord adapter disabled "
+                "(interactions mode needs DISCORD_PUBLIC_KEY + DISCORD_BOT_TOKEN + DISCORD_APPLICATION_ID; "
+                "gateway mode needs DISCORD_BOT_TOKEN + DISCORD_APPLICATION_ID)"
             )
         if slack_router_obj is not None:
             logger.info(

@@ -24,10 +24,10 @@ repos:
       - id: codespell
         exclude_types: [json]
         # `connexion` is a real but uncommon English spelling.
-        # `soket` / `poling` are intentional misspellings used in
-        # tests + comments as fail-fast typo examples for env-var
-        # validation (SLACK_MODE / TELEGRAM_MODE).
-        args: [-L, "connexion,soket,poling"]
+        # `soket` / `poling` / `getway` are intentional misspellings
+        # used in tests + comments as fail-fast typo examples for
+        # env-var validation (SLACK_MODE / TELEGRAM_MODE / DISCORD_MODE).
+        args: [-L, "connexion,soket,poling,getway"]
   # Phase 7 — block real personal identifiers (Telegram / Discord /
   # Slack user IDs, ngrok hostnames, Discord App IDs, etc.) from
   # reaching the repo. Custom rules + allowlist live in
