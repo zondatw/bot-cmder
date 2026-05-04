@@ -97,11 +97,33 @@ class Settings(BaseSettings):
     slack_signing_secret: str | None = None
     slack_bot_token: str | None = None
 
+    # Phase 6b — ingestion mode for the Slack adapter.
+    #   - "events" (default): bot exposes POST /webhooks/slack and
+    #     Slack POSTs slash commands there. Requires public HTTPS URL +
+    #     SLACK_SIGNING_SECRET for HMAC verification.
+    #   - "socket":  bot opens a WebSocket OUT to Slack and slash
+    #     commands arrive over that. NO public URL needed; ideal for
+    #     home labs / NAT / restrictive corp egress. Requires
+    #     SLACK_APP_TOKEN (xapp-...) instead of (or in addition to)
+    #     the signing secret. Slack's UI enforces app-side mutex —
+    #     when Socket Mode is enabled, the Events API URL field is
+    #     greyed out — so the env mode just needs to match the app
+    #     config.
+    # Anything other than "events" / "socket" fails fast at startup.
+    slack_mode: str = "events"
+    # App-level token from Slack app config → Basic Information →
+    # "App-Level Tokens" → Generate (scope: connections:write).
+    # Distinct from SLACK_BOT_TOKEN (xoxb-...): the app token (xapp-...)
+    # authorizes opening a Socket Mode connection; the bot token
+    # authorizes acting as the bot user. Required when SLACK_MODE=socket.
+    slack_app_token: str | None = None
+
     # Read ONLY by scripts/register_slack_commands.py (the running bot
     # never touches this — Slack tells the bot where the request came
     # from per-call). Public HTTPS URL Slack should POST slash commands
     # to. Bare hostname is fine; the script appends /webhooks/slack.
     # Falls back to NGROK_DOMAIN if unset, so dev iteration is terse.
+    # Ignored entirely in SLACK_MODE=socket.
     slack_request_url: str | None = None
 
 

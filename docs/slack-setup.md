@@ -298,6 +298,29 @@ slack:
 
 ---
 
+## 9. (Optional) Socket Mode — no public URL needed
+
+If you don't have a public HTTPS URL (home lab, NAT, restrictive
+egress), Slack's **Socket Mode** is a drop-in alternative. The bot
+opens a WebSocket OUT to Slack and slash commands arrive over that
+connection — no `/webhooks/slack` endpoint, no tunnel.
+
+Quick switch:
+
+```shell
+# 1. In Slack app config: enable Socket Mode toggle, generate
+#    "App-Level Token" with connections:write scope (xapp-...)
+# 2. .env:
+echo "SLACK_MODE=socket"        >> .env
+echo "SLACK_APP_TOKEN=xapp-..." >> .env
+# 3. Restart `just dev` — log should show "mode=socket" + "hello"
+```
+
+Full walkthrough + protocol details + troubleshooting:
+[`docs/slack-socket-mode.md`](slack-socket-mode.md).
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

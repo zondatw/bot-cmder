@@ -13,6 +13,7 @@ from bot_cmder.adapters.discord import DiscordAdapter, DiscordClient
 from bot_cmder.adapters.discord import make_router as discord_router
 from bot_cmder.adapters.slack import SlackAdapter, SlackClient
 from bot_cmder.adapters.slack import make_router as slack_router
+from bot_cmder.adapters.slack.socket import SlackSocketDaemon
 from bot_cmder.adapters.telegram import TelegramAdapter, TelegramClient
 from bot_cmder.adapters.telegram import make_router as telegram_router
 from bot_cmder.adapters.telegram.daemon import TelegramDaemon
@@ -151,12 +152,19 @@ def create_app() -> FastAPI:
             logger.exception("DISCORD_PUBLIC_KEY invalid; discord adapter disabled")
             discord_router_obj = None
 
+    # Slack has two ingestion modes (Phase 6b). Validate at create_app
+    # time so a typo (SLACK_MODE=soket) fails fast.
+    if settings.slack_mode not in {"events", "socket"}:
+        raise ValueError(f"SLACK_MODE must be 'events' or 'socket', got {settings.slack_mode!r}")
+
     slack_client: SlackClient | None = None
     slack_router_obj = None
-    if settings.slack_signing_secret:
-        # SLACK_BOT_TOKEN is currently unused for replies (response_url
-        # is self-authorizing) but we still accept None — Phase 6 socket
-        # mode + future chat.postMessage paths will flip the contract.
+    slack_socket_daemon: SlackSocketDaemon | None = None
+    # Per-mode credential gating: events needs SIGNING_SECRET (HMAC),
+    # socket needs APP_TOKEN (xapp-... opens the WebSocket). Either
+    # path also benefits from BOT_TOKEN being set (Phase 7+ Block Kit
+    # posts), but neither REQUIRES it for the slash-command flow.
+    if settings.slack_mode == "events" and settings.slack_signing_secret:
         slack_client = SlackClient(bot_token=settings.slack_bot_token)
         slack_adapter = SlackAdapter(slack_client, config.slack)
         slack_router_obj = slack_router(
@@ -164,20 +172,28 @@ def create_app() -> FastAPI:
             dispatcher,
             signing_secret=settings.slack_signing_secret,
         )
+    elif settings.slack_mode == "socket" and settings.slack_app_token:
+        slack_client = SlackClient(bot_token=settings.slack_bot_token)
+        slack_adapter = SlackAdapter(slack_client, config.slack)
+        slack_socket_daemon = SlackSocketDaemon(
+            app_token=settings.slack_app_token,
+            adapter=slack_adapter,
+            dispatcher=dispatcher,
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         names = ", ".join(c.name for c in registry.all())
         logger.info("commands registered: %s", names)
-        daemon_task: asyncio.Task | None = None
+        # Track every long-lived asyncio task so the finally block
+        # cancels them in reverse-dependency order (daemons before
+        # the clients they depend on).
+        bg_tasks: list[asyncio.Task] = []
         if telegram_client is not None:
             logger.info("telegram adapter mounted (mode=%s)", settings.telegram_mode)
             await _sync_telegram_command_menu(telegram_client, registry)
             if telegram_daemon is not None:
-                daemon_task = asyncio.create_task(
-                    telegram_daemon.run(),
-                    name="telegram-daemon",
-                )
+                bg_tasks.append(asyncio.create_task(telegram_daemon.run(), name="telegram-daemon"))
         else:
             logger.warning("TELEGRAM_TOKEN not set; telegram adapter disabled")
         if discord_router_obj is not None:
@@ -188,22 +204,34 @@ def create_app() -> FastAPI:
             )
         if slack_router_obj is not None:
             logger.info(
-                "slack adapter mounted (reply_visibility=%s, %d override(s))",
+                "slack adapter mounted (mode=events, reply_visibility=%s, %d override(s))",
                 config.slack.reply_visibility,
                 len(config.slack.visibility_overrides),
             )
+        elif slack_socket_daemon is not None:
+            logger.info(
+                "slack adapter mounted (mode=socket, reply_visibility=%s, %d override(s))",
+                config.slack.reply_visibility,
+                len(config.slack.visibility_overrides),
+            )
+            bg_tasks.append(asyncio.create_task(slack_socket_daemon.run(), name="slack-socket-daemon"))
         else:
-            logger.warning("slack adapter disabled (need SLACK_SIGNING_SECRET)")
+            logger.warning(
+                "slack adapter disabled " "(events mode needs SLACK_SIGNING_SECRET; socket mode needs SLACK_APP_TOKEN)"
+            )
         try:
             yield
         finally:
-            # Stop the polling daemon FIRST, before closing the client
-            # it depends on, otherwise the in-flight long-poll request
-            # would error on the closed transport.
-            if daemon_task is not None:
-                daemon_task.cancel()
+            # Stop background tasks FIRST, before closing the clients
+            # they depend on, otherwise an in-flight long-poll / WSS
+            # frame would error on the closed transport.
+            for t in bg_tasks:
+                t.cancel()
+            for t in bg_tasks:
                 with contextlib.suppress(asyncio.CancelledError):
-                    await daemon_task
+                    await t
+            if slack_socket_daemon is not None:
+                await slack_socket_daemon.aclose()
             if telegram_client is not None:
                 await telegram_client.aclose()
             if discord_client is not None:

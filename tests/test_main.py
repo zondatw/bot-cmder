@@ -103,6 +103,72 @@ def test_invalid_telegram_mode_fails_fast(monkeypatch):
         create_app()
 
 
+def test_slack_socket_mode_skips_webhook_route(monkeypatch):
+    """When SLACK_MODE=socket, /webhooks/slack must NOT mount — the
+    daemon owns ingestion and exposing the webhook would confuse
+    operators (and Slack would never POST there anyway because the
+    app config has Socket Mode enabled, but the unused route still
+    invites confusion)."""
+    from bot_cmder.config.settings import get_settings
+    from bot_cmder.main import create_app
+
+    monkeypatch.setenv("SLACK_MODE", "socket")
+    monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-fake")
+    monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    paths = {getattr(r, "path", None) for r in app.routes}
+    assert "/healthz" in paths
+    assert "/webhooks/slack" not in paths
+
+
+def test_slack_events_mode_keeps_route_default(monkeypatch):
+    """Default SLACK_MODE=events keeps the existing /webhooks/slack
+    surface — Phase 5 behavior preserved by the default."""
+    from bot_cmder.config.settings import get_settings
+    from bot_cmder.main import create_app
+
+    monkeypatch.setenv("SLACK_SIGNING_SECRET", "shhhh")
+    monkeypatch.delenv("SLACK_MODE", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    paths = {getattr(r, "path", None) for r in app.routes}
+    assert "/webhooks/slack" in paths
+
+
+def test_invalid_slack_mode_fails_fast(monkeypatch):
+    """Typo like SLACK_MODE=soket must abort startup, not silently
+    fall back to events (operator would think socket was active)."""
+    from bot_cmder.config.settings import get_settings
+    from bot_cmder.main import create_app
+
+    monkeypatch.setenv("SLACK_MODE", "soket")  # typo
+    get_settings.cache_clear()
+
+    with pytest.raises(ValueError, match="SLACK_MODE"):
+        create_app()
+
+
+def test_slack_socket_mode_without_app_token_disables_adapter(monkeypatch):
+    """SLACK_MODE=socket needs SLACK_APP_TOKEN; without it the adapter
+    stays disabled (consistent with how events mode treats missing
+    SLACK_SIGNING_SECRET — log a warning, don't crash startup)."""
+    from bot_cmder.config.settings import get_settings
+    from bot_cmder.main import create_app
+
+    monkeypatch.setenv("SLACK_MODE", "socket")
+    monkeypatch.delenv("SLACK_APP_TOKEN", raising=False)
+    monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    paths = {getattr(r, "path", None) for r in app.routes}
+    # No webhook (socket mode) and no daemon either (no app token).
+    assert "/webhooks/slack" not in paths
+
+
 def test_create_app_registers_every_builtin():
     """Regression: install_all() must register every Phase 1 + 2 + 3
     builtin into the registry — not silently skip ones whose install

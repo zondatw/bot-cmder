@@ -23,4 +23,8 @@ repos:
     hooks:
       - id: codespell
         exclude_types: [json]
-        args: [-L, connexion]
+        # `connexion` is a real but uncommon English spelling.
+        # `soket` / `poling` are intentional misspellings used in
+        # tests + comments as fail-fast typo examples for env-var
+        # validation (SLACK_MODE / TELEGRAM_MODE).
+        args: [-L, "connexion,soket,poling"]
