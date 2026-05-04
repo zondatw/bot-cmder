@@ -90,6 +90,14 @@ jobs:
   secret-scan:
     name: secret-scan
     runs-on: ubuntu-latest
+    # gitleaks-action calls /repos/.../pulls/N/commits to enumerate
+    # the PR's commits. The default GITHUB_TOKEN doesn't grant that
+    # scope (`Resource not accessible by integration` 403 otherwise).
+    # Read-only `pull-requests: read` is the minimum that satisfies
+    # the API call without giving the action write access to anything.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Check out repo
         uses: actions/checkout@v6
