@@ -1,0 +1,143 @@
+# gitleaks config for bot-cmder.
+#
+# Why this file exists
+# --------------------
+# A previous session leaked the maintainer's real Telegram + Discord
+# user IDs and reserved ngrok hostname into committed docs. The repo
+# was public; remediation cost a `git filter-repo` rewrite, force-push,
+# and a GitHub Support ticket. AGENTS.md codifies the policy ("never
+# commit real identifiers") but policy without enforcement is wishful
+# thinking. This file is the enforcement: gitleaks runs as a pre-commit
+# hook AND as an independent CI job, blocking the same kind of leak
+# from recurring.
+#
+# Three layers of protection:
+#
+#   1. Pre-commit hook (.pre-commit-config.yaml) — local `git commit`
+#      refuses to make the commit if any rule below matches the diff.
+#   2. CI `secret-scan` job (.github/workflows/ci.yml) — runs on every
+#      PR, blocks merge if pre-commit was bypassed (--no-verify).
+#   3. AGENTS.md policy doc — explains WHY for humans + AI agents
+#      reading the rules.
+#
+# How to use this file
+# --------------------
+# - Add a NEW rule when you discover a class of identifier the project
+#   should never commit. Pair every rule with placeholder examples in
+#   AGENTS.md so contributors know what to substitute.
+# - Add a path to `[allowlist].paths` when a directory legitimately
+#   needs to contain real-looking strings (e.g. test fixtures with
+#   intentionally fake but realistic IDs).
+# - Add a regex to `[allowlist].regexes` when a specific placeholder
+#   value should pass globally (use the placeholders documented in
+#   AGENTS.md). Keep the list narrow — broad allowlists mask leaks.
+#
+# - To inspect what gitleaks sees on the current tree:
+#       just check-leaks
+# - To bypass the hook for a single commit (DON'T DO THIS unless you
+#   have no choice — e.g. CI is offline and you've manually verified
+#   the diff):
+#       git commit --no-verify
+#   The CI scan will still catch you on push, so this only buys time.
+#
+# - Detailed walkthrough (false positives, adding patterns, bypass
+#   policy) is in docs/git-leak-prevention.md.
+
+# Inherit gitleaks' default rule set (catches most token shapes:
+# AWS keys, GitHub tokens, Slack xoxb-/xapp-, Stripe, GCP, etc.).
+# We extend it below with project-specific rules; we never disable
+# defaults — they're a free safety net.
+[extend]
+useDefault = true
+
+
+# -------------------------------------------------------------------
+# Project-specific rules
+# -------------------------------------------------------------------
+
+[[rules]]
+id = "telegram-user-id-prefixed"
+description = "Telegram numeric user ID with 'telegram:' prefix (used as norm_id throughout the codebase)"
+# Allow 6-12 digits — real Telegram IDs sit around 9-10 digits. The
+# wide range catches both old (low) and new (high) account ranges
+# without false-positive on placeholder shapes (which the allowlist
+# below removes by exact match).
+regex = '''\btelegram:\d{6,12}\b'''
+tags = ["pii", "bot-cmder"]
+
+[[rules]]
+id = "discord-snowflake-prefixed"
+description = "Discord snowflake user ID with 'discord:' prefix"
+# Discord snowflakes are 17-19 digits. Anything under 17 is too old
+# for a real account; over 19 is impossible (timestamp would be 2050+).
+regex = '''\bdiscord:\d{17,19}\b'''
+tags = ["pii", "bot-cmder"]
+
+[[rules]]
+id = "slack-user-id-prefixed"
+description = "Slack workspace-local user ID with 'slack:' prefix"
+# Slack user IDs start with 'U' followed by 8-13 alphanum chars.
+# Workspace bots may also start with 'B' but those aren't sensitive
+# in the same way — only catch user IDs.
+regex = '''\bslack:U[A-Z0-9]{8,13}\b'''
+tags = ["pii", "bot-cmder"]
+
+[[rules]]
+id = "ngrok-reserved-hostname"
+description = "Reserved ngrok hostname (would let attackers hit the dev tunnel when it's up)"
+# Real reserved hostnames are 3 random English-ish words separated by
+# hyphens. Match conservatively — exactly that shape under
+# .ngrok-free.dev. Allowlist documented placeholders.
+regex = '''\b[a-z]+-[a-z]+-[a-z]+\.ngrok-free\.dev\b'''
+tags = ["infrastructure", "bot-cmder"]
+
+[[rules]]
+id = "discord-application-id-context"
+description = "Discord application ID in env-var or assignment context"
+# Discord App IDs are also snowflakes (18-19 digits). Detecting any
+# 18-19 digit number standalone produces too many false positives
+# (timestamps, large counters), so scope to context: the env var
+# name or an explicit DISCORD_APPLICATION_ID assignment. Catches
+# the realistic leak vector (`echo "DISCORD_APPLICATION_ID=..." >> .env`
+# in docs) without flagging unrelated long numbers in tests.
+regex = '''DISCORD_APPLICATION_ID\s*[:=]\s*\d{17,19}'''
+tags = ["semi-public-id", "bot-cmder"]
+
+
+# -------------------------------------------------------------------
+# Allowlist
+# -------------------------------------------------------------------
+[allowlist]
+description = "Documented placeholders + paths that legitimately contain test-shaped IDs"
+
+# Placeholder values from AGENTS.md. Keep this list in sync with
+# the table in that doc. Adding a new placeholder there → add the
+# regex here too (and document it).
+regexes = [
+    '''telegram:123456789\d''',  # covers the canonical placeholder + 9 nearby example values
+    '''discord:1111111111111111111''',
+    '''slack:U0123ABCD''',
+    '''slack:U0XYZ1A2B''',
+    '''DISCORD_APPLICATION_ID\s*[:=]\s*1500111111111111111''',
+    '''your-reserved-domain\.ngrok-free\.dev''',
+    '''my-tunnel\.ngrok-free\.dev''',
+    '''<your-tunnel>\.ngrok-free\.dev''',
+    '''<your-ngrok>\.ngrok-free\.dev''',
+    '''<your-ngrok>\.ngrok-free\.app''',
+    '''<your-ngrok-domain>\.ngrok-free\.dev''',
+    '''<your-ngrok-domain>\.ngrok-free\.app''',
+    '''coherent-twisty-stowaway\.ngrok-free\.dev''',  # the historical leak example mentioned in some docs as an explicit "don't do this" warning
+]
+
+# Paths exempt from scanning. Tests use compact fake IDs that don't
+# match the rules anyway (telegram:111, slack:U0), but `.gitleaks.toml`
+# itself contains the example placeholders above and would self-flag.
+paths = [
+    '''\.gitleaks\.toml$''',
+    # Test fixtures use short "telegram:111" / "slack:U0" style IDs
+    # that don't match the digit-count rules above, so tests would
+    # pass scanning anyway. We exempt the directory explicitly so
+    # contributors don't get confused by spurious "is my fixture
+    # going to false-positive?" doubt.
+    '''^tests/''',
+]

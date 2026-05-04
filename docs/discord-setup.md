@@ -42,7 +42,7 @@ Both live on **General Information**. Copy them straight into `.env`:
 
 ```shell
 echo "DISCORD_APPLICATION_ID=1500111111111111111" >> .env
-echo "DISCORD_PUBLIC_KEY=00ab3f2fa642099db678327bde38b7bb354bfdd34cbf305826f2aad0d8f66229" >> .env
+echo "DISCORD_PUBLIC_KEY=<64-char-hex-from-General-Information>" >> .env
 ```
 
 Neither is a secret — `APPLICATION_ID` is part of every URL Discord
@@ -59,7 +59,7 @@ secret signing key never leaves Discord's servers).
 5. Paste into `.env` immediately:
 
    ```shell
-   echo "DISCORD_BOT_TOKEN=MTUwMDI3OTk5MTE5MDAzMjQzNQ.GeyUSf.xxxxx" >> .env
+   echo "DISCORD_BOT_TOKEN=<paste-the-bot-token-shown-once>" >> .env
    ```
 
 > ⚠️ **The token is a password.** Treat it accordingly:
@@ -86,7 +86,7 @@ To get the value:
 3. Paste into `.env`:
 
    ```shell
-   echo "DISCORD_GUILD_ID=945123456789012345" >> .env
+   echo "DISCORD_GUILD_ID=<your-server-id>" >> .env
    ```
 
 > **Bot doesn't read this.** `DISCORD_GUILD_ID` lives in `.env` only
@@ -195,7 +195,7 @@ saves successfully, you've proven both:
 just register-discord
 
 # Override env, push to a specific guild for this call only:
-just register-discord --guild=945123456789012345
+just register-discord --guild=<your-server-id>
 
 # Override env, force global push (use for the prod release):
 just register-discord --global
@@ -215,7 +215,7 @@ Manifest: 8 top-level command(s):
   /ssh + args — Run a remote command on a configured host (allowlist + TOTP)
   /whoami — Show your normalized identity and role
 
-Pushing to guild 945123456789012345 (instant propagation)...
+Pushing to guild <your-server-id> (instant propagation)...
 Discord accepted 8 command(s).
 ```
 
