@@ -26,7 +26,9 @@ _FIELDS: list[tuple[str, str, bool]] = [
     ("DISCORD_APPLICATION_ID", "DISCORD_APPLICATION_ID", False),
     ("DISCORD_GUILD_ID", "DISCORD_GUILD_ID", False),
     # Slack
+    ("SLACK_MODE", "SLACK_MODE", False),
     ("SLACK_SIGNING_SECRET", "SLACK_SIGNING_SECRET", True),
+    ("SLACK_APP_TOKEN", "SLACK_APP_TOKEN", True),
     ("SLACK_BOT_TOKEN", "SLACK_BOT_TOKEN", True),
     ("SLACK_REQUEST_URL", "SLACK_REQUEST_URL", False),
     # TOTP
@@ -53,7 +55,16 @@ _GROUPS: list[tuple[str, list[str]]] = [
         ],
     ),
     ("Discord", ["DISCORD_PUBLIC_KEY", "DISCORD_BOT_TOKEN", "DISCORD_APPLICATION_ID", "DISCORD_GUILD_ID"]),
-    ("Slack", ["SLACK_SIGNING_SECRET", "SLACK_BOT_TOKEN", "SLACK_REQUEST_URL"]),
+    (
+        "Slack",
+        [
+            "SLACK_MODE",
+            "SLACK_SIGNING_SECRET",
+            "SLACK_APP_TOKEN",
+            "SLACK_BOT_TOKEN",
+            "SLACK_REQUEST_URL",
+        ],
+    ),
     ("TOTP", ["BOT_CMDER_MASTER_KEY"]),
     ("App", ["APP_CONFIG_PATH", "AUDIT_PATH", "BIND_HOST", "BIND_PORT", "RELOAD"]),
 ]

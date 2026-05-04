@@ -57,7 +57,14 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - Auto-deletes any registered webhook at startup so flipping mode Just Works (no manual `deleteWebhook` step). 409 conflicts are fatal — the daemon won't silently re-delete a webhook someone re-registered, forcing the operator to pick a side.
 - Exponential backoff (1→30s) on transient errors; clean cancellation via `CancelledError` on lifespan shutdown.
 - Tunable `TELEGRAM_POLLING_TIMEOUT_S` (default 25) and `TELEGRAM_POLLING_DROP_PENDING` (default false). Full walkthrough: [`docs/telegram-polling.md`](docs/telegram-polling.md).
-- Slack Socket Mode (Phase 6b) and Discord Gateway (Phase 6c) bring the same no-domain capability to the other two platforms.
+
+**Phase 6b** — Slack Socket Mode (no-domain mode)
+- `SLACK_MODE=socket` flips the adapter from inbound HTTP webhook to outbound WebSocket. Slash commands arrive over the socket Slack pushes back through; no public URL needed. Same dispatcher / OTP gate / audit log; same `/cmd` UX as Events API mode.
+- `SlackSocketDaemon` opens a fresh WSS URL via `apps.connections.open`, ACKs each envelope within 3s, dispatches in a separate task to keep the read loop unblocked, and reconnects on Slack's graceful `disconnect` event (~30 min cycle). Cancellation via `CancelledError` on FastAPI lifespan shutdown.
+- Mutex with Events API enforced **app-side** by Slack's UI (Socket Mode toggle greys out the Events URL), so the bot just needs `SLACK_MODE` to match the app config.
+- New env: `SLACK_APP_TOKEN` (xapp-..., from "App-Level Tokens" → `connections:write` scope). 401/403 from `apps.connections.open` is fatal — bad token won't be retried, daemon exits with clear log.
+- Hand-rolled WebSocket client against the `websockets` library — no `slack-sdk` dependency. Full walkthrough: [`docs/slack-socket-mode.md`](docs/slack-socket-mode.md).
+- Discord Gateway (Phase 6c) brings the same no-domain capability to the third platform.
 
 ## Setup
 
@@ -101,25 +108,34 @@ uv run python server.py
 
 Local dev binds `127.0.0.1:47823` by default (intentionally uncommon to avoid clashing with other services on 8000 / 8080). Override with `BIND_HOST`, `BIND_PORT`, or `RELOAD=1` for autoreload.
 
-### No public URL? Use polling mode (Phase 6a)
+### No public URL? Use the no-domain modes
 
 If your network won't let you expose `https://...` to the internet
-(home lab, NAT, restrictive corp egress), set `TELEGRAM_MODE=polling`
-in `.env` — the bot will dial outbound to `api.telegram.org` and
-long-poll for updates instead of waiting for inbound webhook POSTs.
-Same dispatcher, same `/cmd` UX, same audit log; no tunnel needed.
+(home lab, NAT, restrictive corp egress), each platform has an
+outbound-only ingestion mode that needs no public URL or tunnel.
+Same dispatcher, same `/cmd` UX, same audit log; only the
+ingestion path differs.
 
 ```shell
+# Telegram — long-poll getUpdates (Phase 6a)
 echo "TELEGRAM_MODE=polling" >> .env
+
+# Slack — Socket Mode WebSocket (Phase 6b)
+echo "SLACK_MODE=socket"        >> .env
+echo "SLACK_APP_TOKEN=xapp-..." >> .env
+
 uv run python server.py
-# Logs: "telegram adapter mounted (mode=polling)"
+# Logs:
+#   telegram adapter mounted (mode=polling)
+#   slack adapter mounted (mode=socket, ...)
+#   slack socket: hello (connections=1)
 ```
 
-Full walkthrough + trade-offs + troubleshooting:
-[`docs/telegram-polling.md`](docs/telegram-polling.md).
+Full walkthroughs (trade-offs, protocol details, troubleshooting):
+- Telegram polling: [`docs/telegram-polling.md`](docs/telegram-polling.md)
+- Slack Socket Mode: [`docs/slack-socket-mode.md`](docs/slack-socket-mode.md)
 
-(Slack Socket Mode and Discord Gateway alternatives land in Phase 6b
-and 6c respectively.)
+(Discord Gateway alternative lands in Phase 6c.)
 
 ## Justfile shortcuts
 
