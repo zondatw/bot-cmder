@@ -132,9 +132,24 @@ _DEFAULT_GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
 
 # Resumable close codes — anything in this set means we can RESUME
 # rather than re-IDENTIFY (https://discord.com/developers/docs/topics/opcodes-and-status-codes#gateway-gateway-close-event-codes).
-# Codes 4000-4009 are the "operationally fine, just reconnect" range;
-# 4010+ are fatal (bad shard, intent not enabled, etc.).
+# Codes 4000-4009 are the "operationally fine, just reconnect" range.
 _RESUMABLE_CLOSE_CODES = frozenset({1000, 1001, 1006, 4000, 4001, 4002, 4003, 4005, 4007, 4008, 4009})
+
+# Fatal close codes — operator-config issues that retrying won't fix.
+# We log a clear "what to fix" message and stop the daemon entirely
+# rather than burning quota + log spam on infinite retries (the bug
+# Phase 6c dogfood surfaced when MESSAGE_CONTENT intent wasn't
+# actually enabled in the dev portal — we kept retrying 4014 forever).
+# Each entry maps a close code to the operator-actionable hint.
+_FATAL_CLOSE_REASONS: dict[int, str] = {
+    4004: "DISCORD_BOT_TOKEN is invalid — regenerate at dev portal → Bot → Reset Token",
+    4010: "invalid shard sent in IDENTIFY (this bot doesn't shard; report a bug)",
+    4011: "sharding required (bot is in 2500+ guilds and needs sharding; report a bug)",
+    4012: "invalid Gateway version — pin the Gateway URL version, report a bug",
+    4013: "invalid intents bitmask — report a bug",
+    4014: "MESSAGE_CONTENT intent not enabled — go to Discord dev portal → Bot → "
+    "Privileged Gateway Intents → toggle 'Message Content Intent' on → Save changes",
+}
 
 # Backoff schedule (seconds) for fatal error recovery. Same shape as
 # Telegram polling / Slack socket — exponential 1→30s with reset on
@@ -204,6 +219,19 @@ class DiscordGatewayDaemon:
                 # Discord docs say wait 1-5s before re-IDENTIFY to
                 # avoid a thundering herd; 2s is a fine middle.
                 await asyncio.sleep(2)
+            except _FatalCloseError as exc:
+                # Operator-config issues (bad token, missing intent,
+                # etc.) won't get fixed by retrying. Stop the daemon
+                # entirely with a clear "what to fix" log line —
+                # otherwise we'd burn API quota AND fill stderr with
+                # noise the operator can't act on.
+                logger.error(
+                    "discord gateway: fatal close code=%d — %s. Daemon stopping.",
+                    exc.code,
+                    exc.hint,
+                )
+                await self._stop_heartbeat()
+                return
             except (WebSocketException, OSError) as exc:
                 logger.warning("discord gateway error (%s), retrying in %.1fs", exc, backoff_s)
                 await self._stop_heartbeat()
@@ -232,9 +260,19 @@ class DiscordGatewayDaemon:
                 if exc.code in _RESUMABLE_CLOSE_CODES:
                     logger.info("discord gateway: resumable close (code=%s)", exc.code)
                     return  # outer loop attempts RESUME
-                # Fatal close: wipe session so the outer loop does a
-                # fresh IDENTIFY instead of an invalid RESUME.
-                logger.warning("discord gateway: fatal close (code=%s, reason=%r)", exc.code, exc.reason)
+                # Operator-config close codes (4004 / 4010-4014) are
+                # fatal — retrying won't fix the dev-portal setting
+                # they reflect. Convert to the sentinel exception so
+                # the outer loop logs a clear "what to fix" hint and
+                # stops cleanly instead of burning quota.
+                if exc.code in _FATAL_CLOSE_REASONS:
+                    self._reset_session()
+                    raise _FatalCloseError(exc.code, _FATAL_CLOSE_REASONS[exc.code]) from exc
+                # Unknown / undocumented close code — wipe session and
+                # let the outer loop's transient-error path retry with
+                # backoff. Conservative: better to retry an unrecognized
+                # error than to give up on something that might recover.
+                logger.warning("discord gateway: unrecognized close (code=%s, reason=%r)", exc.code, exc.reason)
                 self._reset_session()
                 raise
             finally:
@@ -431,3 +469,15 @@ class _SessionInvalidated(Exception):
     """Internal marker — raised when Discord sends INVALID_SESSION
     with resumable=False, signalling the outer loop to wipe state
     and re-IDENTIFY fresh after a brief sleep."""
+
+
+class _FatalCloseError(Exception):
+    """Internal marker — raised when the WebSocket closes with one
+    of the operator-config codes in `_FATAL_CLOSE_REASONS`. Carries
+    the actionable hint string so the outer loop can log a clear
+    "what to fix" message before stopping the daemon entirely."""
+
+    def __init__(self, code: int, hint: str) -> None:
+        super().__init__(f"discord fatal close {code}: {hint}")
+        self.code = code
+        self.hint = hint

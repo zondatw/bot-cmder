@@ -390,3 +390,64 @@ async def test_bad_message_create_payload_logged_not_fatal():
 
     # Bad event dropped (no dispatch); good one still went through.
     assert dispatcher.dispatch.await_count == 1
+
+
+# --- regression: fatal close codes stop the daemon (no infinite retry) ---
+
+
+@pytest.mark.asyncio
+async def test_fatal_close_4014_stops_daemon_no_retry():
+    """Regression for the #1 Phase 6c dogfood gotcha:
+
+    When MESSAGE_CONTENT intent isn't enabled in the dev portal,
+    Discord rejects IDENTIFY with close code 4014. Earlier the
+    daemon treated this as a transient WebSocket error and retried
+    forever (1s, 2s, 4s, 8s, 16s, 30s, 30s...) — burning quota +
+    spamming logs. Now 4014 (and the rest of 4010-4014, plus 4004)
+    is recognized as fatal: daemon logs the operator-actionable
+    hint and exits.
+
+    If 4014 isn't fatal, this test would hang forever; asyncio.wait_for
+    catches that case in the worst-case path.
+    """
+    from websockets.exceptions import ConnectionClosed
+    from websockets.frames import Close
+
+    err = ConnectionClosed(rcvd=Close(4014, "Disallowed intent(s)."), sent=None)
+    daemon, _ws, _disp = _build([err])
+    await asyncio.wait_for(daemon.run(), timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_fatal_close_4004_bad_token_stops_daemon():
+    """Bad bot token also surfaces as a close code (4004) — should
+    be fatal too, same reasoning as 4014."""
+    from websockets.exceptions import ConnectionClosed
+    from websockets.frames import Close
+
+    err = ConnectionClosed(rcvd=Close(4004, "Authentication failed."), sent=None)
+    daemon, _ws, _disp = _build([err])
+    await asyncio.wait_for(daemon.run(), timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_unknown_close_code_still_retries():
+    """Unrecognized close codes (e.g. a future Discord-internal value)
+    fall back to the transient-error path so the daemon retries
+    instead of giving up. Conservative — better noisy retries on
+    something recoverable than silent stop on something we just
+    don't know about."""
+    from websockets.exceptions import ConnectionClosed
+    from websockets.frames import Close
+
+    err = ConnectionClosed(rcvd=Close(4099, "future code we don't recognize"), sent=None)
+    daemon, _ws, _disp = _build([err])
+    task = asyncio.create_task(daemon.run())
+    # Give the daemon time to hit the error path + start backing off.
+    # If it FATAL'd it would have exited already; we cancel to confirm
+    # it's still running (and doesn't immediately exit).
+    await asyncio.sleep(0.2)
+    assert not task.done()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
