@@ -110,6 +110,17 @@ documented here.
 
 ### Workflow
 
+- **Issue-first for any planning work.** Before writing code for a
+  new feature or non-trivial refactor, open a GitHub issue with the
+  proposed UX, design decisions (each with the chosen default + the
+  rationale), affected files, audit invariants, and explicit
+  out-of-scope list. Get the maintainer's approval (a comment on
+  the issue, or "approved" back in the chat) BEFORE starting
+  implementation. The agent's role is to make the design legible
+  and challenge-able; the maintainer's role is to confirm scope.
+  Trivial fixes (typo, dependency bump, docstring polish, hot fix
+  for a CI bug surfaced moments earlier) skip this step — they're
+  obviously in scope. When in doubt, open the issue.
 - Atomic commits, PR-then-merge always — never push directly to main
   (history rewrite for the leak above was the documented exception)
 - `pre-commit run --all-files` must pass before push
