@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -33,6 +34,65 @@ from bot_cmder.core.registry import CommandRegistry
 logger = logging.getLogger("bot_cmder")
 
 
+# ANSI escape codes for the per-level colorizer below. Kept as a
+# small dict + helper rather than a colorlog dep — total surface is
+# ~20 lines, the project philosophy favors stdlib for things this
+# small (same as the redact / register-script helpers).
+_ANSI_RESET = "\033[0m"
+_ANSI_DIM = "\033[2m"
+_ANSI_LEVEL_COLOR: dict[str, str] = {
+    "DEBUG": "\033[36m",  # cyan
+    "INFO": "\033[32m",  # green
+    "WARNING": "\033[33m",  # yellow
+    "ERROR": "\033[31m",  # red
+    "CRITICAL": "\033[1;31m",  # bold red
+}
+
+
+class _ColorFormatter(logging.Formatter):
+    """Colorize the levelname + dim the timestamp/logger name when
+    output is going to a real terminal.
+
+    Honors the `NO_COLOR` convention (https://no-color.org/) — set
+    `NO_COLOR=1` in the env to disable colors regardless of TTY.
+    Auto-disabled when stderr is redirected (CI logs, file
+    capture, `tee`'d streams) so the captured text stays grep-able.
+
+    The format string itself stays the same for both branches; we
+    only mutate the record's `levelname` / `asctime` / `name`
+    fields temporarily during `format()` then restore them so other
+    handlers (uvicorn's, future telemetry sinks) see plain values.
+    """
+
+    def __init__(self, *, use_color: bool, datefmt: str) -> None:
+        super().__init__(
+            "%(asctime)s %(levelname)-5s %(name)s: %(message)s",
+            datefmt=datefmt,
+        )
+        self._use_color = use_color
+
+    def format(self, record: logging.LogRecord) -> str:
+        if not self._use_color:
+            return super().format(record)
+        # Snapshot originals so we can restore — record objects are
+        # shared across handlers and a colorized levelname would
+        # leak ANSI codes into log files / structured sinks.
+        orig_levelname = record.levelname
+        orig_name = record.name
+        color = _ANSI_LEVEL_COLOR.get(orig_levelname, "")
+        record.levelname = f"{color}{orig_levelname}{_ANSI_RESET}"
+        record.name = f"{_ANSI_DIM}{orig_name}{_ANSI_RESET}"
+        try:
+            line = super().format(record)
+            # Dim the timestamp prefix too (it's the first 8 chars
+            # under the %H:%M:%S datefmt). Cheaper than weaving it
+            # into the format string with extra %()s tokens.
+            return f"{_ANSI_DIM}{line[:8]}{_ANSI_RESET}{line[8:]}"
+        finally:
+            record.levelname = orig_levelname
+            record.name = orig_name
+
+
 def _setup_logging() -> None:
     """Configure the `bot_cmder.*` logger tree once.
 
@@ -44,12 +104,11 @@ def _setup_logging() -> None:
         return
     logger.setLevel(logging.INFO)
     handler = logging.StreamHandler()
-    handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s %(levelname)-5s %(name)s: %(message)s",
-            datefmt="%H:%M:%S",
-        )
-    )
+    # Color decision: TTY + no opt-out env. `getattr` guards against
+    # streams that don't have isatty (some test harnesses, tee'd file
+    # objects); default to no-color in that case.
+    use_color = bool(getattr(handler.stream, "isatty", lambda: False)()) and not os.environ.get("NO_COLOR")
+    handler.setFormatter(_ColorFormatter(use_color=use_color, datefmt="%H:%M:%S"))
     logger.addHandler(handler)
     logger.propagate = False
 
