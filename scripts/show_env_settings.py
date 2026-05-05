@@ -25,6 +25,7 @@ _FIELDS: list[tuple[str, str, bool]] = [
     ("DISCORD_BOT_TOKEN", "DISCORD_BOT_TOKEN", True),
     ("DISCORD_APPLICATION_ID", "DISCORD_APPLICATION_ID", False),
     ("DISCORD_GUILD_ID", "DISCORD_GUILD_ID", False),
+    ("DISCORD_MODE", "DISCORD_MODE", False),
     # Slack
     ("SLACK_MODE", "SLACK_MODE", False),
     ("SLACK_SIGNING_SECRET", "SLACK_SIGNING_SECRET", True),
@@ -54,7 +55,16 @@ _GROUPS: list[tuple[str, list[str]]] = [
             "NGROK_DOMAIN",
         ],
     ),
-    ("Discord", ["DISCORD_PUBLIC_KEY", "DISCORD_BOT_TOKEN", "DISCORD_APPLICATION_ID", "DISCORD_GUILD_ID"]),
+    (
+        "Discord",
+        [
+            "DISCORD_PUBLIC_KEY",
+            "DISCORD_BOT_TOKEN",
+            "DISCORD_APPLICATION_ID",
+            "DISCORD_GUILD_ID",
+            "DISCORD_MODE",
+        ],
+    ),
     (
         "Slack",
         [

@@ -238,3 +238,73 @@ def test_create_app_registers_every_builtin():
         "service_restart",
         "service_logs",
     }
+
+
+def test_discord_gateway_mode_skips_webhook_route(monkeypatch):
+    """When DISCORD_MODE=gateway, /webhooks/discord must NOT mount —
+    the daemon owns ingestion. Operators get a clean ingestion choice;
+    no phantom HTTP route waiting for slash command POSTs that will
+    never come (Slack's app-config UI enforces the same mutex on its
+    side; Discord doesn't, so we enforce in code)."""
+    from bot_cmder.config.settings import get_settings
+    from bot_cmder.main import create_app
+
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("DISCORD_APPLICATION_ID", "150111111111111111")
+    monkeypatch.setenv("DISCORD_MODE", "gateway")
+    monkeypatch.delenv("DISCORD_PUBLIC_KEY", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    paths = {getattr(r, "path", None) for r in app.routes}
+    assert "/healthz" in paths
+    assert "/webhooks/discord" not in paths
+
+
+def test_discord_interactions_mode_keeps_route_default(monkeypatch):
+    """Default DISCORD_MODE=interactions keeps the existing
+    /webhooks/discord route — Phase 4 behavior preserved."""
+    from bot_cmder.config.settings import get_settings
+    from bot_cmder.main import create_app
+
+    # Public key needs to be valid hex of right length for nacl to accept
+    monkeypatch.setenv("DISCORD_PUBLIC_KEY", "00" * 32)  # 64 hex chars
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("DISCORD_APPLICATION_ID", "150111111111111111")
+    monkeypatch.delenv("DISCORD_MODE", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    paths = {getattr(r, "path", None) for r in app.routes}
+    assert "/webhooks/discord" in paths
+
+
+def test_invalid_discord_mode_fails_fast(monkeypatch):
+    """Typo like DISCORD_MODE=getway must be rejected at startup,
+    not silently fall back to interactions."""
+    from bot_cmder.config.settings import get_settings
+    from bot_cmder.main import create_app
+
+    monkeypatch.setenv("DISCORD_MODE", "getway")  # typo
+    get_settings.cache_clear()
+
+    with pytest.raises(ValueError, match="DISCORD_MODE"):
+        create_app()
+
+
+def test_discord_gateway_mode_without_token_disables_adapter(monkeypatch):
+    """Gateway mode needs DISCORD_BOT_TOKEN + DISCORD_APPLICATION_ID;
+    without them the adapter stays disabled (consistent with how
+    Phase 5 events mode treats missing SLACK_SIGNING_SECRET)."""
+    from bot_cmder.config.settings import get_settings
+    from bot_cmder.main import create_app
+
+    monkeypatch.setenv("DISCORD_MODE", "gateway")
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("DISCORD_APPLICATION_ID", raising=False)
+    monkeypatch.delenv("DISCORD_PUBLIC_KEY", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    paths = {getattr(r, "path", None) for r in app.routes}
+    assert "/webhooks/discord" not in paths

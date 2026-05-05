@@ -64,7 +64,12 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - Mutex with Events API enforced **app-side** by Slack's UI (Socket Mode toggle greys out the Events URL), so the bot just needs `SLACK_MODE` to match the app config.
 - New env: `SLACK_APP_TOKEN` (xapp-..., from "App-Level Tokens" → `connections:write` scope). 401/403 from `apps.connections.open` is fatal — bad token won't be retried, daemon exits with clear log.
 - Hand-rolled WebSocket client against the `websockets` library — no `slack-sdk` dependency. Full walkthrough: [`docs/slack-socket-mode.md`](docs/slack-socket-mode.md).
-- Discord Gateway (Phase 6c) brings the same no-domain capability to the third platform.
+
+**Phase 6c** — Discord Gateway (no-domain mode, with a UX trade-off)
+- `DISCORD_MODE=gateway` flips the adapter from inbound HTTP Interactions to outbound WebSocket. Same dispatcher / OTP gate / audit log; **but Discord doesn't deliver slash commands over the Gateway** — UX shifts to `@bot cmd args` in guild channels or plain `cmd args` in DMs. The adapter normalizes both into the canonical `/cmd args` text shape so the dispatcher path stays byte-equivalent to Interactions mode.
+- `DiscordGatewayDaemon` implements the full Gateway state machine: HELLO → IDENTIFY (or RESUME if session_id is preserved across reconnect) → READY → DISPATCH events with sequence tracking. HEARTBEAT every interval Discord asks for; 2 unacked = zombied, force-close + RESUME. INVALID_SESSION (resumable=False) wipes state for a clean re-IDENTIFY. Hand-rolled against `websockets` — no Discord SDK.
+- Requires the **MESSAGE_CONTENT privileged intent** enabled in the dev portal (Bot → Privileged Gateway Intents). Without it the daemon connects fine but reads empty `content` strings — documented as the #1 gotcha.
+- D3 dual-mode posture: pick ONE per deployment instance (env-validated at startup). Prod with public URL → `interactions`; home lab without → `gateway`. Both can coexist across instances. Full walkthrough: [`docs/discord-gateway.md`](docs/discord-gateway.md).
 
 ## Setup
 
@@ -124,18 +129,26 @@ echo "TELEGRAM_MODE=polling" >> .env
 echo "SLACK_MODE=socket"        >> .env
 echo "SLACK_APP_TOKEN=xapp-..." >> .env
 
+# Discord — Gateway WebSocket (Phase 6c)
+# ⚠️ Trade-off: slash commands don't work in this mode (Discord
+# platform limitation). UX becomes `@bot cmd args` or DM `cmd args`.
+# Also requires enabling the MESSAGE_CONTENT privileged intent in
+# the dev portal: Bot → Privileged Gateway Intents.
+echo "DISCORD_MODE=gateway" >> .env
+
 uv run python server.py
 # Logs:
 #   telegram adapter mounted (mode=polling)
 #   slack adapter mounted (mode=socket, ...)
 #   slack socket: hello (connections=1)
+#   discord adapter mounted (mode=gateway, ...)
+#   discord gateway: READY (bot_id=..., session=...)
 ```
 
 Full walkthroughs (trade-offs, protocol details, troubleshooting):
 - Telegram polling: [`docs/telegram-polling.md`](docs/telegram-polling.md)
 - Slack Socket Mode: [`docs/slack-socket-mode.md`](docs/slack-socket-mode.md)
-
-(Discord Gateway alternative lands in Phase 6c.)
+- Discord Gateway: [`docs/discord-gateway.md`](docs/discord-gateway.md)
 
 ## Justfile shortcuts
 

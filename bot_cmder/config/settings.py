@@ -79,6 +79,22 @@ class Settings(BaseSettings):
     discord_application_id: str | None = None
     discord_guild_id: str | None = None
 
+    # Phase 6c — ingestion mode for the Discord adapter.
+    #   - "interactions" (default): bot exposes POST /webhooks/discord
+    #     and Discord POSTs slash commands there. Requires public
+    #     HTTPS URL + DISCORD_PUBLIC_KEY for Ed25519 verification.
+    #     This is Phase 4 behavior, preserved as the default.
+    #   - "gateway": bot opens a WebSocket OUT to Discord and chat
+    #     events arrive over that. NO public URL needed; ideal for
+    #     home labs / NAT. **Slash commands DON'T arrive over the
+    #     Gateway** (Discord platform limitation) — UX shifts to
+    #     `@bot cmd args` in guild channels or plain `cmd args` in
+    #     DMs. Requires DISCORD_BOT_TOKEN + the MESSAGE_CONTENT
+    #     privileged intent enabled in the Discord dev portal.
+    # Anything other than "interactions" / "gateway" fails fast at
+    # startup. The two modes are mutually exclusive per instance.
+    discord_mode: str = "interactions"
+
     # Phase 5 — Slack adapter. Both required for the adapter to mount;
     # without either, /webhooks/slack stays absent and Slack is silently
     # disabled (logged at WARNING during startup).

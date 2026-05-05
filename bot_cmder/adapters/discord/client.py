@@ -71,6 +71,26 @@ class DiscordClient:
         data: dict[str, Any] = resp.json()
         return data
 
+    async def create_message(self, channel_id: str, content: str) -> dict[str, Any]:
+        """POST a chat message to a channel.
+
+        Used by Phase 6c Gateway-mode replies — interactions reply via
+        the per-invocation webhook URL (no auth needed), but Gateway-
+        originated messages don't have one, so we go through the
+        regular bot-authed REST endpoint. Same 2000-char truncation
+        the @original PATCH path uses.
+        """
+        url = f"/channels/{channel_id}/messages"
+        truncated = _truncate(content)
+        resp = await self._client.post(
+            url,
+            json={"content": truncated},
+            headers={"Authorization": f"Bot {self._bot_token}"},
+        )
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+        return data
+
     async def overwrite_global_commands(self, commands: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """PUT-replace the application's global slash command set."""
         return await self._put_commands(f"/applications/{self._application_id}/commands", commands)
