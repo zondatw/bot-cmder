@@ -1,0 +1,100 @@
+# Test PyPI publish — issue #20 PR-B.
+#
+# Triggered by pushing to the `beta` branch. Mirrors the
+# `zondatw/remote-cmder` workflow pattern (branch-based triggers
+# instead of tag-based) so the publish flow feels familiar across
+# Zonda's repos:
+#
+#   git checkout beta
+#   git merge main          # forward whatever was just verified
+#   git push                # ← this is the trigger
+#
+# After the workflow goes green, eyeball https://test.pypi.org/project/bot-cmder/
+# in a browser. If the page renders the README correctly, license
+# shows MIT, and `pip install --index-url https://test.pypi.org/simple/
+# --extra-index-url https://pypi.org/simple/ bot-cmder` works in a
+# fresh venv → safe to forward to the `release` branch.
+#
+# Auth: PyPI Trusted Publishing (OIDC). No long-lived `TWINE_PASSWORD`
+# in repo secrets — GitHub mints a short-lived token at publish time
+# and PyPI validates it against the pending publisher configured on
+# the test.pypi.org side. See docs/release.md for the one-time setup.
+#
+# Why a separate `beta` branch and not a `--repository test.pypi.org`
+# flag on a workflow_dispatch: matches the repo-mate pattern, and a
+# dedicated branch's HEAD makes "what's currently on test.pypi.org?"
+# answerable with `git log beta`.
+
+name: beta
+
+on:
+  push:
+    branches: [beta]
+
+# Don't cancel an in-flight publish if a second push lands on beta —
+# that would leave test.pypi.org in an inconsistent state. Each push
+# waits for the previous to finish.
+concurrency:
+  group: beta-publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build wheel + sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Verify wheel ships expected data files
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/*.whl)
+          echo "Inspecting $WHEEL"
+          unzip -l "$WHEEL" | grep -q 'bot_cmder/data/app.yaml.example' || (
+            echo "ERROR: bot_cmder/data/app.yaml.example missing from wheel"
+            exit 1
+          )
+          unzip -l "$WHEEL" | grep -q 'bot_cmder/auth/migrations/0001_initial.sql' || (
+            echo "ERROR: bot_cmder/auth/migrations/0001_initial.sql missing from wheel"
+            exit 1
+          )
+          echo "OK — wheel contents verified"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  publish-test:
+    name: publish to test.pypi.org
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: release-test
+      url: https://test.pypi.org/project/bot-cmder/
+    permissions:
+      # Required for PyPI Trusted Publishing — GitHub mints a short-
+      # lived OIDC token that test.pypi.org exchanges for an upload
+      # credential. No long-lived API token in repo secrets.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to Test PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
