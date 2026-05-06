@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     #   - DISCORD_APPLICATION_ID: numeric application ID (URL of the
     #     application page). Part of the follow-up URL we PATCH.
     #   - DISCORD_GUILD_ID: optional, **read only by the register
-    #     script** (scripts/register_discord_commands.py), never by
+    #     subcommand** (`bot-cmder discord-register`), never by
     #     the running bot. When set, slash command registration scopes
     #     to that one guild (instant propagation, dev default); when
     #     unset, registration goes global (~1h propagation, prod). The
@@ -150,10 +150,10 @@ class Settings(BaseSettings):
     # authorizes acting as the bot user. Required when SLACK_MODE=socket.
     slack_app_token: str | None = None
 
-    # Read ONLY by scripts/register_slack_commands.py (the running bot
+    # Read ONLY by `bot-cmder slack-manifest` (the running bot
     # never touches this — Slack tells the bot where the request came
     # from per-call). Public HTTPS URL Slack should POST slash commands
-    # to. Bare hostname is fine; the script appends /webhooks/slack.
+    # to. Bare hostname is fine; the subcommand appends /webhooks/slack.
     # Falls back to NGROK_DOMAIN if unset, so dev iteration is terse.
     # Ignored entirely in SLACK_MODE=socket.
     slack_request_url: str | None = None

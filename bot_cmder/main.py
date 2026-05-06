@@ -240,8 +240,7 @@ def create_app() -> FastAPI:
             logger.warning("TELEGRAM_TOKEN not set; telegram adapter disabled")
         if discord_router_obj is not None:
             logger.info(
-                "discord adapter mounted (mode=interactions, "
-                "slash commands push via scripts/register_discord_commands.py)"
+                "discord adapter mounted (mode=interactions, " "slash commands push via `bot-cmder discord-register`)"
             )
         elif discord_gateway_daemon is not None:
             logger.info("discord adapter mounted (mode=gateway, MESSAGE_CONTENT intent must be enabled in dev portal)")

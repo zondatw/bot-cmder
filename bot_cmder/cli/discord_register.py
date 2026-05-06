@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Push the slash command schema to Discord.
+"""`bot-cmder discord-register` — push slash command schema to Discord.
 
 Run after editing the registry (adding a new builtin, renaming an
 existing one, etc.) so Discord's autocomplete UI matches what the
@@ -233,12 +232,22 @@ def _resolve_guild(args: argparse.Namespace) -> str | None:
     return env or None
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="register-discord-commands",
-        description="Push slash command schema to Discord.",
+def cmd_discord_register(args: argparse.Namespace) -> int:
+    """Handler for `bot-cmder discord-register`. Wraps the async push."""
+    return asyncio.run(_push(_resolve_guild(args)))
+
+
+def add_subparsers(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "discord-register",
+        help="Push slash command schema to Discord (one-time / after registry edits)",
+        description=(
+            "PUT-replace the slash command list on Discord with what the running "
+            "bot supports. Run after adding/removing builtin commands or service "
+            "actions. Idempotent."
+        ),
     )
-    scope = parser.add_mutually_exclusive_group()
+    scope = p.add_mutually_exclusive_group()
     scope.add_argument(
         "--guild",
         metavar="GUILD_ID",
@@ -257,9 +266,4 @@ def main(argv: list[str] | None = None) -> int:
             "Use this for the prod push after dogfooding in a guild."
         ),
     )
-    args = parser.parse_args(argv)
-    return asyncio.run(_push(_resolve_guild(args)))
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    p.set_defaults(func=cmd_discord_register)

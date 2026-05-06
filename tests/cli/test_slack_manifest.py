@@ -1,4 +1,4 @@
-"""Tests for `scripts.register_slack_commands`.
+"""Tests for `bot_cmder.cli.slack_manifest`.
 
 Two halves:
 
@@ -19,24 +19,24 @@ import argparse
 
 import pytest
 
-from bot_cmder.config.settings import Settings, get_settings
-from bot_cmder.core.events import OutgoingResponse, ResponseKind
-from bot_cmder.core.registry import CommandRegistry, Risk, Router, register
-from scripts.register_slack_commands import (
+from bot_cmder.cli.slack_manifest import (
     WEBHOOK_PATH,
     _normalize_request_url,
     _resolve_request_url,
     build_manifest,
 )
+from bot_cmder.config.settings import Settings, get_settings
+from bot_cmder.core.events import OutgoingResponse, ResponseKind
+from bot_cmder.core.registry import CommandRegistry, Risk, Router, register
 
 
 @pytest.fixture(autouse=True)
 def _isolated_settings(monkeypatch):
-    """Same isolation trick as test_register_discord_commands — stop
+    """Same isolation trick as test_discord_register — stop
     the on-disk .env from bleeding env values into precedence tests."""
     get_settings.cache_clear()
     monkeypatch.setattr(
-        "scripts.register_slack_commands.get_settings",
+        "bot_cmder.cli.slack_manifest.get_settings",
         lambda: Settings(_env_file=None),
     )
     yield

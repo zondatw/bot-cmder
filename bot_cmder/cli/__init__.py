@@ -42,12 +42,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Each module owns its own subcommand registration so this
     # dispatcher stays a thin wiring file. Order here only affects the
     # `--help` listing — runtime routing goes through `args.func`.
-    from bot_cmder.cli import init_cmd, keys, serve, totp
+    from bot_cmder.cli import discord_register, init_cmd, keys, serve, slack_manifest, totp
 
     serve.add_subparsers(sub)
     init_cmd.add_subparsers(sub)
     keys.add_subparsers(sub)
     totp.add_subparsers(sub)
+    discord_register.add_subparsers(sub)
+    slack_manifest.add_subparsers(sub)
 
     args = parser.parse_args(argv)
     return args.func(args)

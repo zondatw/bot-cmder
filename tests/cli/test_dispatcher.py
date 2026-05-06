@@ -20,7 +20,16 @@ def test_help_lists_all_subcommands(capsys):
         main(["--help"])
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    for cmd in ("serve", "init", "gen-master-key", "enroll-totp", "list-totp", "revoke-totp"):
+    for cmd in (
+        "serve",
+        "init",
+        "gen-master-key",
+        "enroll-totp",
+        "list-totp",
+        "revoke-totp",
+        "discord-register",
+        "slack-manifest",
+    ):
         assert cmd in out, f"`{cmd}` missing from --help output"
 
 
