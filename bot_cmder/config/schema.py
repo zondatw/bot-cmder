@@ -61,6 +61,14 @@ class TOTPConfig(BaseModel):
     # Telegram users get this many seconds to reply with `/otp <code>`
     # before the session expires and they have to rerun the command.
     session_ttl_s: int = 120
+    # Issue #15 — hard cap on the duration `/otp emergency <minutes>`
+    # can request. Even if the operator types a larger number, the
+    # opened window is capped to this. Rationale: incident lasting
+    # >60 min has more cost than a fresh re-auth round, and a stolen
+    # chat session during a bypass window is bounded in damage by
+    # this number. Tunable per deployment but defaults are
+    # deliberately conservative.
+    emergency_max_minutes: int = 60
 
 
 class KubectlConfig(BaseModel):

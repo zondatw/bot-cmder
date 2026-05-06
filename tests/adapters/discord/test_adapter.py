@@ -58,6 +58,85 @@ def test_parse_uses_member_user_when_in_guild(adapter):
     assert msg.text == "/help"
 
 
+def test_parse_otp_sub_command_with_value(adapter):
+    """Issue #18 — `/otp emergency 5` arrives as a SUB_COMMAND option
+    wrapping the leaf INTEGER value. Adapter must flatten it back to
+    `/otp emergency 5` text so the dispatcher sees the same shape
+    Telegram produces."""
+    payload = {
+        "id": "1",
+        "application_id": "2",
+        "type": 2,
+        "token": "tok",
+        "version": 1,
+        "channel_id": "42",
+        "user": {"id": "9", "username": "z"},
+        "data": {
+            "name": "otp",
+            "type": 1,
+            "options": [
+                {
+                    "name": "emergency",
+                    "type": 1,  # SUB_COMMAND
+                    "options": [{"name": "minutes", "type": 4, "value": 5}],
+                }
+            ],
+        },
+    }
+    msg = adapter.parse(payload)
+    assert msg.text == "/otp emergency 5"
+
+
+def test_parse_otp_sub_command_no_args(adapter):
+    """Issue #18 — `/otp end` and `/otp status` are SUB_COMMANDs with
+    no inner options. The flatten logic must still emit the sub name
+    so the dispatcher routes correctly."""
+    payload = {
+        "id": "1",
+        "application_id": "2",
+        "type": 2,
+        "token": "tok",
+        "version": 1,
+        "channel_id": "42",
+        "user": {"id": "9", "username": "z"},
+        "data": {
+            "name": "otp",
+            "type": 1,
+            "options": [{"name": "status", "type": 1}],
+        },
+    }
+    msg = adapter.parse(payload)
+    assert msg.text == "/otp status"
+
+
+def test_parse_otp_code_sub_command(adapter):
+    """Issue #18 — `/otp code 123456` is the Discord-native form of
+    the bare-code submission. The handler accepts both `code <X>` and
+    bare `<X>`; adapter just needs to flatten correctly."""
+    payload = {
+        "id": "1",
+        "application_id": "2",
+        "type": 2,
+        "token": "tok",
+        "version": 1,
+        "channel_id": "42",
+        "user": {"id": "9", "username": "z"},
+        "data": {
+            "name": "otp",
+            "type": 1,
+            "options": [
+                {
+                    "name": "code",
+                    "type": 1,
+                    "options": [{"name": "code", "type": 3, "value": "123456"}],
+                }
+            ],
+        },
+    }
+    msg = adapter.parse(payload)
+    assert msg.text == "/otp code 123456"
+
+
 def test_parse_concatenates_options_in_order(adapter):
     """If a slash command somehow ships with multiple STRING options
     (e.g. a future schema change adds a `flags` option after `args`),

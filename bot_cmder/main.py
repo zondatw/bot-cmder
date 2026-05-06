@@ -20,6 +20,7 @@ from bot_cmder.adapters.telegram import make_router as telegram_router
 from bot_cmder.adapters.telegram.daemon import TelegramDaemon
 from bot_cmder.audit.log import AuditLogger
 from bot_cmder.auth.acl import check_allowed
+from bot_cmder.auth.emergency import EmergencyWindows
 from bot_cmder.auth.pending import PendingOTPSessions
 from bot_cmder.auth.secret_store import SecretStore
 from bot_cmder.auth.totp import TOTPVerifier
@@ -89,6 +90,12 @@ def create_app() -> FastAPI:
     audit = AuditLogger(config.audit.path)
 
     totp, pending = _build_totp(settings, config)
+    # Issue #15 — emergency OTP-bypass windows. In-memory store; the
+    # cap (default 60 min) is operator-tunable in app.yaml under
+    # `totp.emergency_max_minutes`. Always wired alongside `pending`
+    # since the activation flow piggybacks on PendingOTPSessions; if
+    # `pending` is None (no master key) emergency stays unused too.
+    emergency = EmergencyWindows(max_minutes=config.totp.emergency_max_minutes)
     ssh_pool = SshConnectorPool(config.hosts, config.ssh)
     if config.hosts:
         logger.info(
@@ -96,7 +103,15 @@ def create_app() -> FastAPI:
             len(config.hosts),
             ", ".join(sorted(config.hosts)),
         )
-    install_all(registry, pending=pending, totp=totp, audit=audit, ssh_pool=ssh_pool, config=config)
+    install_all(
+        registry,
+        pending=pending,
+        totp=totp,
+        audit=audit,
+        ssh_pool=ssh_pool,
+        config=config,
+        emergency=emergency,
+    )
 
     dispatcher = Dispatcher(
         registry=registry,
@@ -104,6 +119,7 @@ def create_app() -> FastAPI:
         audit=audit,
         acl_check=check_allowed,
         pending=pending,
+        emergency=emergency,
     )
 
     # Telegram has two ingestion modes (Phase 6a). Validate the env

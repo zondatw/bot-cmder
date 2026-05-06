@@ -7,6 +7,7 @@ from bot_cmder.core.registry import CommandRegistry
 
 if TYPE_CHECKING:
     from bot_cmder.audit.log import AuditLogger
+    from bot_cmder.auth.emergency import EmergencyWindows
     from bot_cmder.auth.pending import PendingOTPSessions
     from bot_cmder.auth.totp import TOTPVerifier
     from bot_cmder.config.schema import AppConfig
@@ -38,9 +39,12 @@ def install_otp(
     pending: PendingOTPSessions,
     totp: TOTPVerifier,
     audit: AuditLogger,
+    emergency: EmergencyWindows | None = None,
 ) -> None:
-    """Register the /otp builtin. Requires the TOTP wiring."""
-    otp.install(registry, pending=pending, totp=totp, audit=audit)
+    """Register the /otp builtin. Requires the TOTP wiring; the
+    emergency-window store is optional (issue #15 — kept optional
+    so existing tests that build a registry without it still work)."""
+    otp.install(registry, pending=pending, totp=totp, audit=audit, emergency=emergency)
 
 
 def install_ssh(
@@ -68,6 +72,7 @@ def install_all(
     audit: AuditLogger | None = None,
     ssh_pool: SshConnectorPool | None = None,
     config: AppConfig | None = None,
+    emergency: EmergencyWindows | None = None,
 ) -> None:
     """One-shot installer used by main.py.
 
@@ -75,10 +80,14 @@ def install_all(
     only when the TOTP triad is wired; /ssh and /service * land only
     when both an SshConnectorPool and an AppConfig are supplied
     (config drives the dynamic /service action subcommands).
+
+    `emergency` (issue #15) is optional — when provided, /otp grows
+    the `emergency` / `end` / `status` sub-syntaxes and the dispatcher
+    consults the window state to bypass the OTP gate.
     """
     install_safe(registry)
     install_privileged(registry)
     if pending is not None and totp is not None and audit is not None:
-        install_otp(registry, pending=pending, totp=totp, audit=audit)
+        install_otp(registry, pending=pending, totp=totp, audit=audit, emergency=emergency)
     if ssh_pool is not None and audit is not None and config is not None:
         install_ssh(registry, ssh_pool=ssh_pool, audit=audit, config=config)

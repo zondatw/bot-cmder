@@ -89,8 +89,33 @@ class DiscordAdapter(PlatformAdapter):
         if caller is None:
             return None
 
+        # Flatten the option tree back into `/cmd args...` text so the
+        # dispatcher sees the same shape Telegram produces. Two layouts
+        # we accept (Discord rule: a slash command's options are EITHER
+        # all leaf values OR all sub-commands, never mixed):
+        #
+        #   1. Leaf options only — e.g. /service with one `args` STRING:
+        #        options=[{name:"args", type:3, value:"restart api"}]
+        #      → "/service restart api"
+        #
+        #   2. SUB_COMMAND wrapper (issue #18) — e.g. /otp emergency 5:
+        #        options=[{name:"emergency", type:1, options:[
+        #           {name:"minutes", type:4, value:5}]}]
+        #      → "/otp emergency 5"
+        #
+        # SUB_COMMAND_GROUP (type=2) would add another nesting level,
+        # but we don't emit any in our schema, so a single descent
+        # suffices. If we ever do, this should grow into a recursive
+        # walk.
         parts: list[str] = [f"/{interaction.data.name}"]
         for opt in interaction.data.options or []:
+            if opt.type == 1:  # SUB_COMMAND — descend one level
+                parts.append(opt.name)
+                for inner in opt.options or []:
+                    if inner.value is None:
+                        continue
+                    parts.append(str(inner.value))
+                continue
             if opt.value is None:
                 continue
             parts.append(str(opt.value))
