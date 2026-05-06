@@ -67,7 +67,9 @@ def test_coerce_int_falls_back_on_garbage():
 
 
 def test_cmd_serve_calls_uvicorn_with_defaults(monkeypatch):
-    """No flags + no env vars → uvicorn.run gets 0.0.0.0:8000, reload=False."""
+    """No flags + no env vars → uvicorn.run gets 127.0.0.1:47823,
+    reload=False. Defaults match the deleted server.py byte-for-byte
+    so existing reverse-proxy / tunnel configs keep working."""
     for var in ("BOT_CMDER_HOST", "BOT_CMDER_PORT", "BOT_CMDER_RELOAD", "BIND_HOST", "BIND_PORT", "RELOAD"):
         monkeypatch.delenv(var, raising=False)
     with patch("uvicorn.run") as run_mock:
@@ -75,8 +77,8 @@ def test_cmd_serve_calls_uvicorn_with_defaults(monkeypatch):
     assert rc == 0
     run_mock.assert_called_once()
     kwargs = run_mock.call_args.kwargs
-    assert kwargs["host"] == "0.0.0.0"
-    assert kwargs["port"] == 8000
+    assert kwargs["host"] == "127.0.0.1"
+    assert kwargs["port"] == 47823
     assert kwargs["reload"] is False
 
 

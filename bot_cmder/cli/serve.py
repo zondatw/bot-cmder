@@ -9,7 +9,13 @@ Flag precedence (highest wins):
     --host / --port / --reload  CLI flags
     BOT_CMDER_HOST / BOT_CMDER_PORT / BOT_CMDER_RELOAD env vars
     BIND_HOST / BIND_PORT / RELOAD  (DEPRECATED, with warning)
-    hardcoded defaults (0.0.0.0 / 8000 / false)
+    hardcoded defaults (127.0.0.1 / 47823 / false)
+
+The default host is loopback-only on purpose — exposing the bot on
+all interfaces should be an explicit choice (`--host 0.0.0.0` or
+the env var). The 47823 port matches what the deleted server.py
+used to default to, so existing reverse-proxy / tunnel configs
+keep working without any operator action.
 """
 
 from __future__ import annotations
@@ -76,8 +82,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     """
     import uvicorn
 
-    host = args.host or _env_or_alias("BOT_CMDER_HOST", "BIND_HOST") or "0.0.0.0"
-    port = args.port if args.port is not None else _coerce_int(_env_or_alias("BOT_CMDER_PORT", "BIND_PORT"), 8000)
+    host = args.host or _env_or_alias("BOT_CMDER_HOST", "BIND_HOST") or "127.0.0.1"
+    port = args.port if args.port is not None else _coerce_int(_env_or_alias("BOT_CMDER_PORT", "BIND_PORT"), 47823)
     reload_flag = args.reload or _coerce_bool(_env_or_alias("BOT_CMDER_RELOAD", "RELOAD"), False)
 
     logger.info("bot-cmder serve: host=%s port=%d reload=%s", host, port, reload_flag)
@@ -102,8 +108,8 @@ def add_subparsers(sub: argparse._SubParsersAction) -> None:
             "the defaults from .env or the shell."
         ),
     )
-    p.add_argument("--host", default=None, help="Bind address (default: BOT_CMDER_HOST or 0.0.0.0)")
-    p.add_argument("--port", type=int, default=None, help="Bind port (default: BOT_CMDER_PORT or 8000)")
+    p.add_argument("--host", default=None, help="Bind address (default: BOT_CMDER_HOST or 127.0.0.1)")
+    p.add_argument("--port", type=int, default=None, help="Bind port (default: BOT_CMDER_PORT or 47823)")
     p.add_argument(
         "--reload",
         action="store_true",
