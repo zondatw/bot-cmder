@@ -32,9 +32,9 @@ points at exactly where.
 | `DISCORD_BOT_TOKEN` | **Bot** → "Reset Token" (see below) | **yes** | ✅ |
 | `DISCORD_GUILD_ID` | Discord client (not dev portal) — see step 2c | no | optional, recommended for dev |
 
-> `DISCORD_GUILD_ID` is read **only** by `scripts/register_discord_commands.py`
+> `DISCORD_GUILD_ID` is read **only** by `bot-cmder discord-register`
 > (the running bot never touches it). The `--guild=<id>` and `--global` CLI
-> flags on that script can override the env value per call — see [§2c](#2c-discord_guild_id-optional-recommended-for-dev) and [§5](#5-register-the-slash-command-schema).
+> flags on that subcommand can override the env value per call — see [§2c](#2c-discord_guild_id-optional-recommended-for-dev) and [§5](#5-register-the-slash-command-schema).
 
 ### 2a. `DISCORD_APPLICATION_ID` and `DISCORD_PUBLIC_KEY`
 
@@ -90,8 +90,8 @@ To get the value:
    ```
 
 > **Bot doesn't read this.** `DISCORD_GUILD_ID` lives in `.env` only
-> for ergonomics — `scripts/register_discord_commands.py` is the
-> single consumer. The running bot doesn't care which guild it's in;
+> for ergonomics — `bot-cmder discord-register` is the single
+> consumer. The running bot doesn't care which guild it's in;
 > Discord's interaction payloads carry `guild_id` per request.
 
 Precedence when running `just register-discord`:
@@ -315,7 +315,7 @@ users:
     role: sre
 ```
 
-`just dev` autoreloads on save (when `RELOAD=1`); no restart needed.
+`just dev` autoreloads on save (uses `bot-cmder serve --reload`); no restart needed.
 
 ### Gotcha 2: PRIVILEGED command not in `acl.commands` → "forbidden" without OTP prompt
 

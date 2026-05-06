@@ -18,7 +18,7 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - Replay-protected `TOTPVerifier` over `pyotp`.
 - OTP gate in `Dispatcher`: any `Risk.PRIVILEGED` command stashes a `PendingOTPSession` and asks the user for `/otp <code>` (configurable TTL, default 120s).
 - `/otp` builtin enforces same-chat / same-platform OTP delivery, expiry, replay, and emits distinct audit events for each failure mode.
-- Admin CLI: `python -m bot_cmder.cli {enroll,list,revoke}-totp` (or `just enroll-totp <user>`).
+- Admin CLI: `bot-cmder {enroll,list,revoke}-totp --user <id>` (or `just enroll-totp <user>`).
 - `/kubectl <subcmd> [args...]` — whitelisted (default get/describe/logs/rollout/scale/top), KUBECONFIG honored, output truncated.
 - `/runbook list` (SAFE) and `/runbook run <name> [args...]` (PRIVILEGED) — discovers executable scripts in `runbooks/`, rejects path traversal and shell metacharacters in args.
 
@@ -37,7 +37,7 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - `POST /webhooks/discord` with PyNaCl Ed25519 signature verification (Discord refuses to onboard endpoints that don't sign-check).
 - PING (type 1) → answered inline; APPLICATION_COMMAND (type 2) → defer (`type: 5`) immediately, run dispatch in a `BackgroundTask`, then PATCH `@original` via the per-interaction webhook URL. Honors Discord's 3-second initial-response cap even for slow handlers (SSH, OTP gate).
 - `DiscordClient` handles both deferred follow-ups (no auth — interaction token IS the capability) and slash command registration (bot token).
-- `scripts/register_discord_commands.py` (`just register-discord`) PUT-replaces the slash command schema. Builds the manifest from the live registry so /service action subcommands derived from yaml show up in Discord's autocomplete.
+- `bot-cmder discord-register` (or `just register-discord`) PUT-replaces the slash command schema. Builds the manifest from the live registry so /service action subcommands derived from yaml show up in Discord's autocomplete.
 - Slash commands are flat: each Command and Router gets one top-level `/cmd` with a single STRING `args` option (or `code` for `/otp`). The adapter recombines `/<cmd> <args>` back into the same text-shaped IncomingMessage Telegram produces — same dispatch flow on both platforms.
 
 **Phase 5** — Slack adapter
@@ -71,47 +71,71 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 - Requires the **MESSAGE_CONTENT privileged intent** enabled in the dev portal (Bot → Privileged Gateway Intents). Without it the daemon connects fine but reads empty `content` strings — documented as the #1 gotcha.
 - D3 dual-mode posture: pick ONE per deployment instance (env-validated at startup). Prod with public URL → `interactions`; home lab without → `gateway`. Both can coexist across instances. Full walkthrough: [`docs/discord-gateway.md`](docs/discord-gateway.md).
 
-## Setup
+## Install
 
-Requires Python 3.10+ and [`uv`](https://github.com/astral-sh/uv).
+Requires Python 3.10+.
+
+### From PyPI (recommended)
 
 ```shell
-uv sync
-pre-commit install --install-hooks
+pip install bot-cmder
+bot-cmder init                              # scaffold ~/.config/bot-cmder/{app.yaml,.env} + state dir
+# edit ~/.config/bot-cmder/app.yaml — add your users + ACL
+bot-cmder enroll-totp --user telegram:<your-id>
+bot-cmder serve
 ```
 
-Create a `.env` (see `.env.example`):
+`bot-cmder init` writes `~/.config/bot-cmder/app.yaml` (verbatim copy of [`bot_cmder/data/app.yaml.example`](bot_cmder/data/app.yaml.example) — full reference of every settable field), `~/.config/bot-cmder/.env` (with a freshly generated `BOT_CMDER_MASTER_KEY`, chmod 600), and `~/.local/state/bot-cmder/` (where `audit.jsonl` and `totp.sqlite` materialize on first use).
+
+### From source (contributors)
+
+Requires [`uv`](https://github.com/astral-sh/uv).
+
+```shell
+git clone https://github.com/zondatw/bot-cmder.git
+cd bot-cmder
+uv sync && pre-commit install --install-hooks
+uv run bot-cmder init --config-dir .       # scaffolds into repo (./config/, ./var/) instead of ~/.config
+uv run bot-cmder serve --reload
+```
+
+The from-source flow uses `./config/app.yaml`, `./.env`, and `./var/` (CWD-relative), preserving the Phase 1-7 dev workflow exactly.
+
+### Config file locations
+
+`bot-cmder` searches for `app.yaml` (and `.env`, and the state dir) in this order, returning the first hit:
+
+1. `--config <path>` CLI flag / `BOT_CMDER_CONFIG` env var
+2. `./config/app.yaml` (CWD-relative, dev workflow)
+3. `$XDG_CONFIG_HOME/bot-cmder/app.yaml` (default `~/.config/bot-cmder/app.yaml`, installed flow)
+
+Same precedence for `.env` (`./.env` → `$XDG_CONFIG_HOME/bot-cmder/.env`) and the state dir (`BOT_CMDER_STATE_DIR` → `./var/` → `$XDG_STATE_HOME/bot-cmder/`).
+
+### Required environment
+
+Whatever path resolution lands on, the `.env` (or shell env) needs at minimum:
 
 ```
+# Phase 2 — required for /kubectl, /runbook run and any Risk.PRIVILEGED command
+BOT_CMDER_MASTER_KEY=<run `bot-cmder gen-master-key` to generate>
+
+# At least one platform — Telegram / Discord / Slack
 TELEGRAM_TOKEN=xxxxxxxxxxxxx
 TELEGRAM_WEBHOOK_SECRET=any-long-random-string
-APP_CONFIG_PATH=./config/app.yaml
-
-# Phase 2 — required for /kubectl, /runbook run and any Risk.PRIVILEGED command
-BOT_CMDER_MASTER_KEY=<run `just gen-master-key` to generate>
-```
-
-Create `config/app.yaml` (see `bot_cmder/data/app.yaml.example` for the full reference):
-
-```yaml
-users:
-  - {id: zonda, aliases: ["telegram:1234567890"], role: sre}
-acl:
-  default_allow_safe: ["role:sre"]
-healthcheck:
-  targets:
-    - {name: api, url: https://api.example.com/healthz}
-audit:
-  path: ./var/audit.jsonl
 ```
 
 ## Run
 
 ```shell
-uv run python server.py
+bot-cmder serve                # PyPI flow
+uv run bot-cmder serve --reload  # source flow with autoreload
+# or equivalently
+python -m bot_cmder serve
 ```
 
-Local dev binds `127.0.0.1:47823` by default (intentionally uncommon to avoid clashing with other services on 8000 / 8080). Override with `BIND_HOST`, `BIND_PORT`, or `RELOAD=1` for autoreload.
+Defaults to `127.0.0.1:47823` (intentionally uncommon to avoid clashing with other services on 8000 / 8080). Override via `--host` / `--port` flags, or `BOT_CMDER_HOST` / `BOT_CMDER_PORT` / `BOT_CMDER_RELOAD` env vars.
+
+The legacy `BIND_HOST` / `BIND_PORT` / `RELOAD` / `APP_CONFIG_PATH` env names keep working through 0.2.x with a deprecation warning; rename to the `BOT_CMDER_*` form before 0.3.0.
 
 ### No public URL? Use the no-domain modes
 
@@ -136,7 +160,7 @@ echo "SLACK_APP_TOKEN=xapp-..." >> .env
 # the dev portal: Bot → Privileged Gateway Intents.
 echo "DISCORD_MODE=gateway" >> .env
 
-uv run python server.py
+uv run bot-cmder serve
 # Logs:
 #   telegram adapter mounted (mode=polling)
 #   slack adapter mounted (mode=socket, ...)
