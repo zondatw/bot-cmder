@@ -91,7 +91,7 @@ APP_CONFIG_PATH=./config/app.yaml
 BOT_CMDER_MASTER_KEY=<run `just gen-master-key` to generate>
 ```
 
-Create `config/app.yaml` (see `config/app.yaml.example`):
+Create `config/app.yaml` (see `bot_cmder/data/app.yaml.example` for the full reference):
 
 ```yaml
 users:

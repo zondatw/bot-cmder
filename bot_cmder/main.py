@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from bot_cmder import __version__
 from bot_cmder.adapters.discord import DiscordAdapter, DiscordClient
 from bot_cmder.adapters.discord import make_router as discord_router
 from bot_cmder.adapters.discord.gateway import DiscordGatewayDaemon
@@ -289,7 +290,7 @@ def create_app() -> FastAPI:
                 await slack_client.aclose()
             await ssh_pool.close_all()
 
-    app = FastAPI(lifespan=lifespan, title="bot-cmder", version="0.1.0")
+    app = FastAPI(lifespan=lifespan, title="bot-cmder", version=__version__)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, bool]:
