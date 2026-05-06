@@ -12,7 +12,7 @@ install:
 
 # Run the dev server with autoreload.
 dev:
-    RELOAD=1 uv run python server.py
+    uv run bot-cmder serve --reload
 
 # Bring up a cloudflared quick tunnel, write its URL into .env as
 # TELEGRAM_HOOK_URL, register the webhook with Telegram, then keep
@@ -91,23 +91,30 @@ send-text-to-user user_id text:
         -d "{\"chat_id\": $1, \"text\": \"$2\"}"
     @echo
 
+# Issue #20 — first-run scaffold. Creates app.yaml + .env (with a
+# freshly generated BOT_CMDER_MASTER_KEY) into ./config/, plus
+# ./var/. Use `bot-cmder init --config-dir .` directly for the
+# same effect when not using just.
+init:
+    uv run bot-cmder init --config-dir .
+
 # Generate a fresh TOTP secret for a user and print the otpauth URI.
 # Use the URI with any QR generator or paste into 1Password / Authy.
 enroll-totp user:
-    uv run python -m bot_cmder.cli enroll-totp --user {{user}}
+    uv run bot-cmder enroll-totp --user {{user}}
 
 # List every user with a stored TOTP enrollment.
 list-totp:
-    uv run python -m bot_cmder.cli list-totp
+    uv run bot-cmder list-totp
 
 # Drop one user's TOTP enrollment.
 revoke-totp user:
-    uv run python -m bot_cmder.cli revoke-totp --user {{user}}
+    uv run bot-cmder revoke-totp --user {{user}}
 
 # Print a fresh BOT_CMDER_MASTER_KEY suitable for .env.
 # WARNING: regenerating this invalidates every existing enrollment.
 gen-master-key:
-    @uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    @uv run bot-cmder gen-master-key
 
 # Phase 4 — push the slash command schema to Discord. Run after
 # editing the registry (e.g. adding a yaml action) so Discord's
@@ -115,7 +122,7 @@ gen-master-key:
 # `--guild=<id>` for dev (instant propagation, one server only);
 # without args pushes globally (~1h propagation, every guild + DMs).
 register-discord *args:
-    uv run python -m scripts.register_discord_commands "$@"
+    uv run bot-cmder discord-register "$@"
 
 # Phase 5 — generate Slack app manifest YAML from the live registry.
 # Print to stdout by default; pipe to a file or use `--out file`.
@@ -124,4 +131,4 @@ register-discord *args:
 # SLACK_REQUEST_URL env, falling back to NGROK_DOMAIN — pass
 # `--request-url <url>` to override per call.
 register-slack *args:
-    uv run python -m scripts.register_slack_commands "$@"
+    uv run bot-cmder slack-manifest "$@"

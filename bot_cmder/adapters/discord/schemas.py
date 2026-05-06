@@ -62,7 +62,7 @@ class InteractionDataOption(BaseModel):
         no `value`, has nested `options` carrying the actual leaf
         values. Used by /otp's per-syntax schema (`/otp emergency 5`,
         `/otp end`, `/otp status`, `/otp code 123456`) — see
-        `scripts/register_discord_commands.py` and issue #18.
+        `bot_cmder/cli/discord_register.py` and issue #18.
 
     The DiscordAdapter walks the tree once and flattens it back to
     the same `/cmd args...` text shape Telegram produces.

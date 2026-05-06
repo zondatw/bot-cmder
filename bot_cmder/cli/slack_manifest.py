@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Generate the Slack app manifest from the live registry.
+"""`bot-cmder slack-manifest` — generate the Slack app manifest from the live registry.
 
 Run after editing the registry (adding a builtin, renaming, changing
 a description) so Slack's slash command list matches what the bot
@@ -189,12 +188,22 @@ def _generate(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="register-slack-commands",
-        description="Generate Slack app manifest YAML from the live registry.",
+def cmd_slack_manifest(args: argparse.Namespace) -> int:
+    """Handler for `bot-cmder slack-manifest`. Generates the Slack
+    manifest YAML and writes to args.out (default stdout)."""
+    return _generate(args)
+
+
+def add_subparsers(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "slack-manifest",
+        help="Generate Slack app manifest YAML (paste into app config)",
+        description=(
+            "Render the Slack app manifest YAML reflecting the running bot's "
+            "registry. Paste into Slack app config → Features → App Manifest."
+        ),
     )
-    parser.add_argument(
+    p.add_argument(
         "--request-url",
         metavar="URL",
         help=(
@@ -203,20 +212,15 @@ def main(argv: list[str] | None = None) -> int:
             "appended automatically. Overrides SLACK_REQUEST_URL env."
         ),
     )
-    parser.add_argument(
+    p.add_argument(
         "--app-name",
         default="bot-cmder",
         help="Slack app display name (default: bot-cmder).",
     )
-    parser.add_argument(
+    p.add_argument(
         "--out",
         type=argparse.FileType("w"),
         default=sys.stdout,
         help="Write manifest to file instead of stdout.",
     )
-    args = parser.parse_args(argv)
-    return _generate(args)
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    p.set_defaults(func=cmd_slack_manifest)

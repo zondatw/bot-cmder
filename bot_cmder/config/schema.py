@@ -6,6 +6,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
+from bot_cmder.config.paths import state_dir
+
 
 class _NullableDefaults(BaseModel):
     """Treat explicit YAML null as 'use the field's default' for any
@@ -50,13 +52,20 @@ class ACLConfig(_NullableDefaults):
 
 
 class AuditConfig(BaseModel):
-    path: Path = Path("./var/audit.jsonl")
+    # Default resolves at instantiation time, not class-definition time,
+    # so changing CWD or env vars between import and AppConfig() works
+    # as expected. Issue #20: dev workflow keeps writing to ./var/ when
+    # ./var/ exists; installed users get $XDG_STATE_HOME/bot-cmder/.
+    path: Path = Field(default_factory=lambda: state_dir() / "audit.jsonl")
 
 
 class TOTPConfig(BaseModel):
     """Phase 2 TOTP-gating settings."""
 
-    secret_store_path: Path = Path("./var/totp.sqlite")
+    # Same default_factory pattern as AuditConfig.path — see issue #20.
+    # Existing yaml that hardcodes `./var/totp.sqlite` keeps working;
+    # only the implicit default changes for users who never set it.
+    secret_store_path: Path = Field(default_factory=lambda: state_dir() / "totp.sqlite")
     # Lifetime of a "pending privileged command awaiting OTP" session.
     # Telegram users get this many seconds to reply with `/otp <code>`
     # before the session expires and they have to rerun the command.

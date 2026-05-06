@@ -209,7 +209,7 @@ on a host you don't sit at:
 > which case the audit log carries the workspace-local ID the
 > dispatcher uses.
 
-`just dev` autoreloads on yaml save (with `RELOAD=1`); no restart needed.
+`just dev` autoreloads on yaml save (uses `bot-cmder serve --reload`); no restart needed.
 
 ### 6c. Enroll TOTP for the new norm_id
 

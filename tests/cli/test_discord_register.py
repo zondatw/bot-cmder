@@ -1,10 +1,15 @@
-"""Precedence tests for `scripts.register_discord_commands._resolve_guild`.
+"""Precedence tests for `bot_cmder.cli.discord_register._resolve_guild`.
 
-The script supports four ways to choose a registration scope; the
+The subcommand supports four ways to choose a registration scope; the
 order matters because a forgotten `DISCORD_GUILD_ID` in `.env` could
 otherwise silently scope a prod push to the dev guild. This test
 nails the precedence so the contract documented in the docstring
 stays honest.
+
+Issue #20 moved this from `scripts/register_discord_commands.py` to
+the unified CLI as `bot-cmder discord-register`; the schema-building
+helpers (`_build_command_schema` etc.) and `_resolve_guild` carried
+over verbatim, so this test file mostly tracks the import path move.
 """
 
 from __future__ import annotations
@@ -13,8 +18,9 @@ import argparse
 
 import pytest
 
+from bot_cmder.cli import main
+from bot_cmder.cli.discord_register import _build_command_schema, _resolve_guild
 from bot_cmder.config.settings import Settings, get_settings
-from scripts.register_discord_commands import _build_command_schema, _resolve_guild, main
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +35,7 @@ def _isolated_settings(monkeypatch):
     """
     get_settings.cache_clear()
     monkeypatch.setattr(
-        "scripts.register_discord_commands.get_settings",
+        "bot_cmder.cli.discord_register.get_settings",
         lambda: Settings(_env_file=None),
     )
     yield
@@ -70,9 +76,10 @@ def test_blank_env_treated_as_unset(monkeypatch, blank):
 
 def test_guild_and_global_are_mutually_exclusive():
     # argparse should reject `--guild=X --global` because they're in
-    # the same mutually_exclusive_group.
+    # the same mutually_exclusive_group. Through the unified CLI
+    # dispatcher (`bot-cmder discord-register --guild=X --global`).
     with pytest.raises(SystemExit):
-        main(["--guild", "111", "--global"])
+        main(["discord-register", "--guild", "111", "--global"])
 
 
 # --- Issue #18 — /otp gets the SUB_COMMAND treatment ----------------
