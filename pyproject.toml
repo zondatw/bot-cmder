@@ -1,6 +1,6 @@
 [project]
 name = "bot-cmder"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Multi-platform SRE ChatOps bot (Telegram / Discord / Slack)"
 authors = [{name = "Zonda Yang", email = "u226699@gmail.com"}]
 readme = "README.md"
@@ -29,6 +29,16 @@ dependencies = [
     # pydantic-settings cover those needs in the new layout.
 ]
 
+[project.scripts]
+# `pip install bot-cmder` puts this on PATH. Pairs with bot_cmder/__main__.py
+# so `bot-cmder serve` and `python -m bot_cmder serve` are equivalent.
+bot-cmder = "bot_cmder.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/zondatw/bot-cmder"
+Repository = "https://github.com/zondatw/bot-cmder"
+Issues = "https://github.com/zondatw/bot-cmder/issues"
+
 [dependency-groups]
 dev = [
     "ipython>=8.12",
@@ -45,8 +55,18 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Dynamic version source: a single `__version__ = "0.X.Y"` line in
+# bot_cmder/__init__.py. Bump there before tagging a release; the CLI's
+# `bot-cmder --version`, FastAPI's OpenAPI metadata, and the wheel's
+# Metadata-Version field all read from that one source of truth.
+[tool.hatch.version]
+path = "bot_cmder/__init__.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["bot_cmder"]
+# bot_cmder/data/app.yaml.example + bot_cmder/auth/migrations/*.sql
+# ride along automatically because they live under `bot_cmder/`.
+# Verified at build time via `unzip -l dist/bot_cmder-*.whl`.
 
 [tool.ruff]
 line-length = 120
