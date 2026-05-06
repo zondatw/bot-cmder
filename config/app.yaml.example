@@ -42,6 +42,16 @@ totp:
   # How long a privileged command waits for `/otp <code>` before the
   # pending session is discarded.
   session_ttl_s: 120
+  # Issue #15 — hard cap (in minutes) on `/otp emergency <minutes>`
+  # window duration. Operators can request shorter windows; anything
+  # above this is silently capped (the reply text + audit log surface
+  # the actual granted duration). Set lower for stricter teams; higher
+  # if your incident playbook demands longer hands-off windows.
+  # Disable the feature entirely by setting to 0 — the cap floor is 1
+  # min, so 0 here makes every grant request fall back to 1 min, NOT
+  # zero out emergency mode. (Proper "disable emergency mode" knob is
+  # tracked separately if needed.)
+  emergency_max_minutes: 60
 
 # Phase 2 — /kubectl builtin.
 kubectl:
