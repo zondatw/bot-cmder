@@ -1,10 +1,34 @@
-# bot-cmder application config.
+# bot-cmder application config — full reference.
 #
-# Secrets (Telegram token, webhook secret) live in `.env`. This file is
-# safe to commit. Copy to `config/app.yaml` and edit.
+# Every settable field is shown explicitly, with its default value
+# uncommented. Copy to `config/app.yaml` and tighten / strip down to
+# what your deployment actually needs.
+#
+# Secrets (Telegram token, webhook secret, master key) live in `.env`,
+# not here. This file is safe to commit.
 #
 # `whoami` is the easiest way to discover the norm_id strings you need
 # below — run `/whoami` in your bot DM and copy the value it prints.
+
+# ---------------------------------------------------------------------
+# State paths at a glance
+# ---------------------------------------------------------------------
+# bot-cmder writes three things to disk during normal operation. Set
+# them up here so a glance at this section tells you where state lives.
+# All three default to `./var/...` (relative to the process CWD); for
+# prod, pin to absolute paths and `mkdir -p` the parents before serve.
+#
+#   audit.path                   ./var/audit.jsonl
+#   totp.secret_store_path       ./var/totp.sqlite
+#   runbook.dir                  ./runbooks
+#
+# Issue #20 will add XDG-aware defaults for installed users; until then
+# these CWD-relative paths are the contract.
+# ---------------------------------------------------------------------
+
+# ---------------------------------------------------------------------
+# Phase 1 — identity + access control
+# ---------------------------------------------------------------------
 
 users:
   - id: zonda
@@ -12,7 +36,7 @@ users:
     role: sre
 
   # - id: alice
-  #   aliases: ["telegram:1234567891"]
+  #   aliases: ["telegram:1234567891", "discord:222...232", "slack:U0X...A2B"]
   #   role: viewer
 
 acl:
@@ -20,28 +44,63 @@ acl:
   # own command-specific override below.
   default_allow_safe: ["role:sre", "role:viewer"]
 
-  # Per-command override. Keys are command names; values are allow rules
-  # (norm_ids or "role:<name>"). Privileged commands deny by default
-  # unless they appear here. Leave as `{}` if you have no overrides.
+  # Per-command override. Keys are command names (post-router-rewrite,
+  # i.e. `service_restart`, not `service restart` — same string the
+  # audit log records under `command:`). Values are allow rules
+  # (norm_ids or `role:<name>`). PRIVILEGED commands deny by default
+  # unless they appear here.
   commands: {}
   # commands:
-  #   restart: ["role:sre"]
-  #   kubectl: ["role:sre"]
+  #   kubectl:        ["role:sre"]
+  #   service_restart:["role:sre"]
+  #   ssh:            ["role:sre"]
+
+# ---------------------------------------------------------------------
+# Phase 1 — HTTP healthcheck targets (`/health`)
+# ---------------------------------------------------------------------
 
 healthcheck:
   targets:
-    - {name: api, url: https://api.example.com/healthz, expect_status: 200, timeout_s: 5}
-    # - {name: db, url: https://db.example.com/ping}
+    - name: api
+      url: https://api.example.com/healthz
+      expect_status: 200
+      timeout_s: 5.0
+    # - name: db
+    #   url: https://db.example.com/ping
+    #   expect_status: 200
+    #   timeout_s: 5.0
+
+# ---------------------------------------------------------------------
+# Phase 1 — append-only audit log
+# ---------------------------------------------------------------------
+# Every command attempt, ACL deny, OTP event, SSH connection,
+# emergency-bypass grant/use/revoke gets a JSONL line here. Treat as
+# tamper-evidence + post-mortem source. Rotate / archive externally
+# (logrotate, vector, fluent-bit) — bot-cmder doesn't.
 
 audit:
+  # Absolute path strongly recommended in prod. The parent directory
+  # must exist before `bot-cmder serve` starts.
   path: ./var/audit.jsonl
 
-# Phase 2 — TOTP gate for privileged commands.
+# ---------------------------------------------------------------------
+# Phase 2 — TOTP gate for PRIVILEGED commands
+# ---------------------------------------------------------------------
+# The SQLite database stores per-user Fernet-encrypted TOTP secrets.
+# Lose this file → every enrolled user has to re-run `bot-cmder
+# enroll-totp`. Lose the master key (`.env: BOT_CMDER_MASTER_KEY`) →
+# the same, the file becomes unreadable.
+
 totp:
+  # SQLite database holding Fernet-encrypted TOTP secrets per norm_id.
+  # Treat backup-importance as equal to a passwords vault.
   secret_store_path: ./var/totp.sqlite
+
   # How long a privileged command waits for `/otp <code>` before the
-  # pending session is discarded.
+  # pending session is discarded. Telegram users get this many seconds
+  # to reply with the code before the original command has to be rerun.
   session_ttl_s: 120
+
   # Issue #15 — hard cap (in minutes) on `/otp emergency <minutes>`
   # window duration. Operators can request shorter windows; anything
   # above this is silently capped (the reply text + audit log surface
@@ -53,50 +112,68 @@ totp:
   # tracked separately if needed.)
   emergency_max_minutes: 60
 
-# Phase 2 — /kubectl builtin.
+# ---------------------------------------------------------------------
+# Phase 2 — /kubectl builtin (PRIVILEGED)
+# ---------------------------------------------------------------------
+
 kubectl:
-  # Optional: pin a specific kubeconfig file. If unset, the bot
-  # process inherits KUBECONFIG / ~/.kube/config.
+  # Pin a specific kubeconfig file. Leave commented to inherit the bot
+  # process's KUBECONFIG / ~/.kube/config.
   # kubeconfig: /home/bot/.kube/config
 
-  # Hard whitelist of subcommands the bot will exec. Add `exec`,
-  # `delete`, `apply` etc. at your own risk — these defaults are
+  # Hard whitelist of subcommands the bot will exec. Adding `exec`,
+  # `delete`, `apply` etc. is at your own risk — these defaults are
   # deliberately read-mostly + benign ops.
   allowed_subcommands: [get, describe, logs, rollout, scale, top]
 
-  # Per-call output cap; longer kubectl output is truncated.
+  # Per-call output cap; longer kubectl output is truncated with a
+  # `[...truncated N bytes]` marker.
   max_output_bytes: 3500
 
-# Phase 2 — /runbook list and /runbook run.
+# ---------------------------------------------------------------------
+# Phase 2 — /runbook list and /runbook run
+# ---------------------------------------------------------------------
+
 runbook:
-  # Directory containing executable scripts. Treat as code: gitops
-  # it, code-review additions; whoever can write here controls
-  # everything bot-cmder can do.
+  # Directory containing executable scripts (chmod +x *.sh / *.py).
+  # Treat as code: gitops-manage it, code-review additions; whoever
+  # can write here controls everything bot-cmder can do.
   dir: ./runbooks
+
+  # Per-call output cap for runbook stdout/stderr.
   max_output_bytes: 3500
 
-# Phase 3 — SSH connector tuning. Defaults are fine for daily use.
+# ---------------------------------------------------------------------
+# Phase 3 — SSH connector tuning
+# ---------------------------------------------------------------------
+# Defaults are fine for daily use. Tune `pool_ttl_s` higher if you have
+# many short-lived `/service status` calls; tune `command_timeout_s`
+# lower if you want stricter "don't hang the bot" SLA per command.
+
 ssh:
   pool_ttl_s: 300         # reuse one SSH connection per host for 5 min
   command_timeout_s: 30   # hard limit per remote command
-  max_output_bytes: 3500
+  max_output_bytes: 3500  # truncate longer remote stdout/stderr
 
-# Phase 3 — SSH-reachable hosts. Each key is the canonical name
-# /service and /ssh refer to. Strict known_hosts checking is
-# always on; if `known_hosts` is unset, asyncssh falls back to
-# the bot user's ~/.ssh/known_hosts.
+# ---------------------------------------------------------------------
+# Phase 3 — SSH-reachable hosts
+# ---------------------------------------------------------------------
+# Each key under `hosts` is the canonical name `/service` and `/ssh`
+# refer to. Strict known_hosts checking is always on; if `known_hosts`
+# is unset, asyncssh falls back to the bot user's ~/.ssh/known_hosts.
 #
-# `allowed_commands` only governs the /ssh escape hatch: the joined
-# command string must fully-match at least one regex. /service-*
+# `allowed_commands` only governs the `/ssh` escape hatch: the joined
+# command string must fully-match at least one regex. `/service-*`
 # actions ignore it because the action templates ARE the allowlist.
+
 hosts: {}
 # hosts:
 #   server-a:
 #     address: 10.0.1.5
 #     user: deploy
-#     port: 22                                    # default 22
+#     port: 22                                       # default 22
 #     key_path: /etc/bot-cmder/keys/server-a.ed25519
-#     # known_hosts: /etc/bot-cmder/known_hosts  # default ~/.ssh/known_hosts
+#     known_hosts: /etc/bot-cmder/known_hosts       # default ~/.ssh/known_hosts
 #     allowed_commands:
 #       - "^sudo systemctl (status|restart) (api|worker)\\.service$"
 #       - "^sudo journalctl -u (api|worker)\\.service .*$"
@@ -104,9 +181,11 @@ hosts: {}
 #     address: 10.0.1.6
 #     user: deploy
 #     key_path: /etc/bot-cmder/keys/server-b.ed25519
+#     allowed_commands: []                           # /ssh fully disabled for this host
 
-# Phase 3 — services with predefined actions.
-#
+# ---------------------------------------------------------------------
+# Phase 3 — services with predefined actions
+# ---------------------------------------------------------------------
 # Each action key under a service auto-registers a corresponding
 # `/service <action>` subcommand on bot startup. Add `sysinfo:
 # "uname -a"` here, restart the bot, and `/service sysinfo <name>`
@@ -127,6 +206,7 @@ hosts: {}
 # ACL config keys for the auto-registered subcommands stay
 # `acl.commands.service_<action>` (e.g. service_restart). You can
 # tighten read actions further by adding the same form there.
+
 services: {}
 # services:
 #   api:
@@ -138,30 +218,29 @@ services: {}
 #       restart: "sudo systemctl restart api.service"     # PRIV  --host required
 #       deploy:  "/usr/local/bin/deploy-api"              # PRIV  --host required
 
-# Phase 5 — Slack adapter knobs.
-#
+# ---------------------------------------------------------------------
+# Phase 5 — Slack adapter knobs
+# ---------------------------------------------------------------------
 # Slack slash commands can reply two ways:
 #   - ephemeral   : only the user who invoked the command sees the reply
 #   - in_channel  : everyone in the channel sees the reply
 #
-# `reply_visibility` sets the global default. The `by_risk` mode is
-# the suggested middle ground — diagnostic SAFE commands (`/help`,
-# `/health`, `/service status`, `/service sysinfo`) go to the channel
-# so teammates can spot each other's status checks; PRIVILEGED ones
-# (`/service restart`, `/ssh`, `/kubectl`, `/runbook run`) stay
-# private so SSH output isn't broadcast.
+# `reply_visibility` modes:
+#   - `by_risk`    SAFE → in_channel, PRIVILEGED → ephemeral (recommended)
+#   - `in_channel` everything goes to channel — collaborative ops
+#   - `ephemeral`  everything stays private — paranoid mode
 #
 # `visibility_overrides` tweaks individual commands. Keys are the
 # synthetic command names the dispatcher records (e.g. `service_restart`,
 # not `service restart`) — same string `audit.jsonl` records under
 # `command:`, easy to copy. Values must be `in_channel` or `ephemeral`
 # (the override resolves to one of the two final states).
+
 slack:
   reply_visibility: by_risk        # by_risk | in_channel | ephemeral
   visibility_overrides: {}
-  # Examples:
   # visibility_overrides:
-  #   whoami: ephemeral            # don't broadcast user IDs
-  #   help:   in_channel           # team learns by lurking
-  #   service_status: in_channel   # ops dashboard vibe
-  #   service_logs:   ephemeral    # logs may carry sensitive data
+  #   whoami:          ephemeral   # don't broadcast user IDs
+  #   help:            in_channel  # team learns by lurking
+  #   service_status:  in_channel  # ops dashboard vibe
+  #   service_logs:    ephemeral   # logs may carry sensitive data
