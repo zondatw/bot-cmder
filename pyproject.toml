@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Multi-platform SRE ChatOps bot (Telegram / Discord / Slack)"
 authors = [{name = "zonda yang", email = "u226699@gmail.com"}]
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.110",

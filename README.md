@@ -402,3 +402,7 @@ config/     pydantic-settings (env) + YAML
 ```
 
 The full plan and roadmap live in `docs/PLAN.md`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
