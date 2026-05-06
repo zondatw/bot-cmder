@@ -215,3 +215,177 @@ async def test_valid_code_resumes_router_subcommand(setup, app_config, audit_pat
     assert audited["event"] == "EXECUTED"
     assert audited["command"] == "svc_restart"
     assert audited["via_otp"] is True
+
+
+# --- issue #15 — emergency-bypass sub-syntaxes ----------------------------
+
+
+@pytest.fixture
+def setup_with_emergency(tmp_path: Path):
+    """Like `setup` but also wires an EmergencyWindows with a
+    deterministic clock so window expiry is testable."""
+    from bot_cmder.auth.emergency import EmergencyWindows
+
+    audit_path = tmp_path / "audit.jsonl"
+    audit = AuditLogger(audit_path)
+    store = SecretStore(tmp_path / "totp.sqlite", Fernet.generate_key().decode())
+    totp = TOTPVerifier(store)
+    secret, _ = totp.enroll("telegram:111")
+
+    pending = PendingOTPSessions(ttl_s=120)
+
+    class _Clock:
+        def __init__(self):
+            self.now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+        def __call__(self):
+            return self.now
+
+        def advance(self, **kw):
+            self.now = self.now + timedelta(**kw)
+
+    clock = _Clock()
+    emergency = EmergencyWindows(max_minutes=60, clock=clock)
+    reg = CommandRegistry()
+
+    async def _restart(ctx, args):
+        return OutgoingResponse.text_reply(f"restarted {args}")
+
+    reg.register(Command(name="restart", risk=Risk.PRIVILEGED, handler=_restart))
+
+    otp.install(reg, pending=pending, totp=totp, audit=audit, emergency=emergency)
+    return reg, pending, totp, audit, audit_path, secret, emergency, clock
+
+
+async def test_otp_status_shows_off_when_no_window(setup_with_emergency, app_config):
+    reg, *_ = setup_with_emergency
+    resp = await reg.get("otp").handler(_ctx(app_config), ["status"])
+    assert "emergency mode: off" in resp.text
+
+
+async def test_otp_status_shows_remaining_when_window_active(setup_with_emergency, app_config):
+    reg, _pending, _totp, _audit, _audit_path, _secret, emergency, _clock = setup_with_emergency
+    emergency.grant("telegram:111", 30)
+    resp = await reg.get("otp").handler(_ctx(app_config), ["status"])
+    assert "emergency mode: ON" in resp.text
+    assert "30 min" in resp.text
+
+
+async def test_otp_end_with_no_window_is_noop(setup_with_emergency, app_config):
+    reg, *_ = setup_with_emergency
+    resp = await reg.get("otp").handler(_ctx(app_config), ["end"])
+    assert "no emergency window active" in resp.text
+
+
+async def test_otp_end_revokes_active_window_and_audits(setup_with_emergency, app_config, audit_path):
+    reg, _pending, _totp, _audit, _audit_path, _secret, emergency, _clock = setup_with_emergency
+    emergency.grant("telegram:111", 30)
+
+    resp = await reg.get("otp").handler(_ctx(app_config), ["end"])
+
+    assert "revoked" in resp.text
+    assert emergency.is_active("telegram:111") is False
+    audited = _read_audit(audit_path)[0]
+    assert audited["event"] == "EMERGENCY_OTP_REVOKED"
+    assert audited["granted_minutes"] == 30
+
+
+async def test_otp_emergency_request_stashes_pending_session(setup_with_emergency, app_config, audit_path):
+    """Phase 1 of activation: /otp emergency 15 must STASH (not
+    activate yet) — the actual window doesn't open until the user
+    submits the OTP code in a follow-up message."""
+    reg, pending, *_ = setup_with_emergency
+    resp = await reg.get("otp").handler(_ctx(app_config), ["emergency", "15"])
+
+    assert "Reply with: /otp <6-digit-code>" in resp.text
+    # Window is NOT active yet — only the request is stashed.
+    session = pending.pop("telegram:111")
+    assert session is not None
+    assert session.command_name == "__emergency_activate__"
+    assert session.args == ["15"]
+    audited = _read_audit(audit_path)[0]
+    assert audited["event"] == "OTP_REQUESTED"
+    assert audited["command"] == "__emergency_activate__"
+
+
+async def test_otp_emergency_invalid_duration_rejected_and_audited(setup_with_emergency, app_config, audit_path):
+    reg, *_ = setup_with_emergency
+    resp = await reg.get("otp").handler(_ctx(app_config), ["emergency", "abc"])
+    assert "must be a positive integer" in resp.text
+    audited = _read_audit(audit_path)[0]
+    assert audited["event"] == "EMERGENCY_OTP_INVALID_DURATION"
+    assert audited["requested"] == "abc"
+
+
+async def test_otp_emergency_zero_duration_rejected(setup_with_emergency, app_config):
+    reg, *_ = setup_with_emergency
+    resp = await reg.get("otp").handler(_ctx(app_config), ["emergency", "0"])
+    assert "must be a positive integer" in resp.text
+
+
+async def test_otp_emergency_full_activation_flow(setup_with_emergency, app_config, audit_path):
+    """End-to-end: /otp emergency 15 → /otp <code> → window is
+    actually granted, audit fires GRANTED with both requested and
+    granted minutes."""
+    reg, _pending, _totp, _audit, _audit_path, secret, emergency, _clock = setup_with_emergency
+
+    # Step 1: stash the request
+    await reg.get("otp").handler(_ctx(app_config), ["emergency", "15"])
+
+    # Step 2: submit OTP code → activation
+    resp = await reg.get("otp").handler(_ctx(app_config), [pyotp.TOTP(secret).now()])
+    assert "EMERGENCY MODE ACTIVE" in resp.text
+    assert "15 min" in resp.text
+
+    # Window is now active for that user
+    assert emergency.is_active("telegram:111")
+
+    audited_events = [e["event"] for e in _read_audit(audit_path)]
+    assert "OTP_REQUESTED" in audited_events  # from step 1
+    assert "EMERGENCY_OTP_GRANTED" in audited_events  # from step 2
+    granted = [e for e in _read_audit(audit_path) if e["event"] == "EMERGENCY_OTP_GRANTED"][0]
+    assert granted["requested_minutes"] == 15
+    assert granted["granted_minutes"] == 15  # under cap
+
+
+async def test_otp_emergency_capped_at_max_minutes(setup_with_emergency, app_config, audit_path):
+    """Hard cap surfaces in audit (granted_minutes < requested_minutes)
+    AND in the user-facing reply ("requested 480, capped to 60")."""
+    reg, _pending, _totp, _audit, _audit_path, secret, _emergency, _clock = setup_with_emergency
+
+    await reg.get("otp").handler(_ctx(app_config), ["emergency", "480"])
+    resp = await reg.get("otp").handler(_ctx(app_config), [pyotp.TOTP(secret).now()])
+
+    assert "60 min" in resp.text
+    assert "capped to 60" in resp.text
+
+    granted = [e for e in _read_audit(audit_path) if e["event"] == "EMERGENCY_OTP_GRANTED"][0]
+    assert granted["requested_minutes"] == 480
+    assert granted["granted_minutes"] == 60
+
+
+async def test_otp_emergency_invalid_code_does_not_activate(setup_with_emergency, app_config):
+    """Wrong OTP after /otp emergency must NOT activate the window —
+    same security contract as the regular OTP gate."""
+    reg, _pending, _totp, _audit, _audit_path, _secret, emergency, _clock = setup_with_emergency
+
+    await reg.get("otp").handler(_ctx(app_config), ["emergency", "15"])
+    resp = await reg.get("otp").handler(_ctx(app_config), ["000000"])  # wrong code
+
+    assert "invalid" in resp.text.lower()
+    assert emergency.is_active("telegram:111") is False
+
+
+async def test_usage_bare_unknown_subcommand_with_extra_args(setup_with_emergency, app_config):
+    """`/otp foo bar` — `foo` isn't a known subcommand, so `foo` is
+    treated as a code; with extra `bar` arg present, return usage
+    rather than silently dropping it."""
+    reg, *_ = setup_with_emergency
+    resp = await reg.get("otp").handler(_ctx(app_config), ["foo", "bar"])
+    assert "usage" in resp.text
+
+
+async def test_usage_for_extra_args_on_end_or_status(setup_with_emergency, app_config):
+    reg, *_ = setup_with_emergency
+    assert "usage" in (await reg.get("otp").handler(_ctx(app_config), ["end", "now"])).text
+    assert "usage" in (await reg.get("otp").handler(_ctx(app_config), ["status", "verbose"])).text

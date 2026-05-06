@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from bot_cmder.core.context import CommandContext
@@ -14,6 +14,7 @@ from bot_cmder.core.registry import Command, CommandRegistry
 
 if TYPE_CHECKING:
     from bot_cmder.audit.log import AuditLogger
+    from bot_cmder.auth.emergency import EmergencyWindows
     from bot_cmder.auth.pending import PendingOTPSessions
     from bot_cmder.config.schema import AppConfig
 
@@ -32,6 +33,13 @@ class Dispatcher:
     # /otp builtin pops the session and invokes the original handler
     # after verifying the user's TOTP code.
     pending: PendingOTPSessions | None = None
+    # Issue #15 — when set AND a user has an active emergency window,
+    # PRIVILEGED commands skip the OTP gate entirely (run inline) and
+    # the resulting EXECUTED audit record carries `via_emergency_otp:
+    # true` instead of going through the normal stash flow.
+    # Activation of the window happens in /otp emergency <minutes>;
+    # this dispatcher just consults the window state per call.
+    emergency: EmergencyWindows | None = None
     now: Callable[[], datetime] = datetime.now
 
     # Names of builtins that themselves drive the OTP flow and so
@@ -103,30 +111,52 @@ class Dispatcher:
         # /otp <code> before the handler actually runs. Disabled
         # entirely if no PendingOTPSessions was injected (Phase 1
         # behavior / tests without TOTP infra).
+        via_emergency_otp = False
         if cmd.effective_2fa and self.pending is not None and cmd.name not in self._OTP_GATE_BYPASS:
-            self.pending.stash(
-                user_norm_id=msg.user.norm_id,
-                chat_id=msg.chat_id,
-                platform=msg.platform,
-                command_name=cmd.name,
-                args=command_args,
-            )
-            self.audit.log(
-                event="OTP_REQUESTED",
-                platform=msg.platform.value,
-                user=msg.user.norm_id,
-                chat=msg.chat_id,
-                command=cmd.name,
-                # OTP_REQUESTED logs the RESUMED command's args, not
-                # /otp's own. /otp itself bypasses the OTP gate so it
-                # never reaches this branch — but redact anyway for
-                # consistent policy enforcement.
-                args=redact_args_for_audit(cmd.name, command_args),
-                ttl_s=self.pending.ttl_s,
-            )
-            return OutgoingResponse.text_reply(
-                f"Privileged command. Reply with: /otp <6-digit-code> within {self.pending.ttl_s}s"
-            )
+            # Issue #15 — emergency-window pre-check. If the user has
+            # an active bypass window we record the bypass + skip the
+            # stash, falling through to the normal handler call below.
+            window = self.emergency.get(msg.user.norm_id) if self.emergency is not None else None
+            if window is not None:
+                via_emergency_otp = True
+                self.audit.log(
+                    event="EMERGENCY_OTP_BYPASS",
+                    platform=msg.platform.value,
+                    user=msg.user.norm_id,
+                    chat=msg.chat_id,
+                    command=cmd.name,
+                    args=redact_args_for_audit(cmd.name, command_args),
+                    # Use tz-aware UTC because EmergencyWindow stores
+                    # tz-aware timestamps; mixing naive (default
+                    # `self.now`) would raise TypeError on subtract.
+                    window_remaining_s=window.remaining_s(datetime.now(timezone.utc)),
+                    expires_at=window.expires_at.isoformat(),
+                )
+                # Fall through to handler call.
+            else:
+                self.pending.stash(
+                    user_norm_id=msg.user.norm_id,
+                    chat_id=msg.chat_id,
+                    platform=msg.platform,
+                    command_name=cmd.name,
+                    args=command_args,
+                )
+                self.audit.log(
+                    event="OTP_REQUESTED",
+                    platform=msg.platform.value,
+                    user=msg.user.norm_id,
+                    chat=msg.chat_id,
+                    command=cmd.name,
+                    # OTP_REQUESTED logs the RESUMED command's args, not
+                    # /otp's own. /otp itself bypasses the OTP gate so it
+                    # never reaches this branch — but redact anyway for
+                    # consistent policy enforcement.
+                    args=redact_args_for_audit(cmd.name, command_args),
+                    ttl_s=self.pending.ttl_s,
+                )
+                return OutgoingResponse.text_reply(
+                    f"Privileged command. Reply with: /otp <6-digit-code> within {self.pending.ttl_s}s"
+                )
 
         ctx = CommandContext.from_message(msg, self.config, self.now)
 
@@ -155,14 +185,21 @@ class Dispatcher:
             )
             return OutgoingResponse(kind=ResponseKind.TEXT, text=f"error: {exc}")
 
-        self.audit.log(
-            event="EXECUTED",
-            platform=msg.platform.value,
-            user=msg.user.norm_id,
-            chat=msg.chat_id,
-            command=cmd.name,
-            args=redact_args_for_audit(cmd.name, command_args),
-        )
+        executed_kwargs: dict = {
+            "event": "EXECUTED",
+            "platform": msg.platform.value,
+            "user": msg.user.norm_id,
+            "chat": msg.chat_id,
+            "command": cmd.name,
+            "args": redact_args_for_audit(cmd.name, command_args),
+        }
+        if via_emergency_otp:
+            # Only emit the field when true so non-bypass executions
+            # keep their existing audit shape (no field-bloat for the
+            # 95% case). Operators filter `select(.via_emergency_otp)`
+            # to find every command that ran during a bypass window.
+            executed_kwargs["via_emergency_otp"] = True
+        self.audit.log(**executed_kwargs)
         # Annotate so adapters (specifically Slack's reply-visibility
         # selector) know what risk class actually ran. Done here, not
         # inside each handler, so we don't have to teach 8+ builtins

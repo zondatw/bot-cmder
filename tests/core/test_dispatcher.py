@@ -298,3 +298,110 @@ async def test_otp_args_never_leak_to_audit(dispatcher, registry, make_message, 
     assert len(otp_events) == 2
     for e in otp_events:
         assert e["args"] == ["<redacted>"]
+
+
+# --- issue #15 — emergency-window bypass at the dispatcher layer ---------
+
+
+@pytest.fixture
+def emergency_dispatcher(registry, app_config, audit, pending):
+    """Like `dispatcher` but with EmergencyWindows wired so the OTP
+    gate consults it before stashing."""
+    from bot_cmder.auth.emergency import EmergencyWindows
+
+    emergency = EmergencyWindows(max_minutes=60)
+    return (
+        Dispatcher(
+            registry=registry,
+            config=app_config,
+            audit=audit,
+            acl_check=check_allowed,
+            pending=pending,
+            emergency=emergency,
+        ),
+        emergency,
+    )
+
+
+async def test_active_emergency_window_bypasses_otp_gate(emergency_dispatcher, make_message, audit_path):
+    """The headline contract from issue #15: when a user has an
+    active window, the dispatcher SKIPS the OTP stash and runs
+    the privileged command inline. EXECUTED audit gets the
+    via_emergency_otp:true marker; OTP_REQUESTED is NOT emitted."""
+    dispatcher, emergency = emergency_dispatcher
+    emergency.grant("telegram:111", 30)
+
+    resp = await dispatcher.dispatch(make_message("/restart api", user_id="111"))
+
+    # Privileged command ran inline — no "Privileged. Reply with /otp..." prompt.
+    assert "Privileged" not in resp.text
+    assert "args=['api']" in resp.text  # _ok_handler echoes args back
+
+    events = [e["event"] for e in _read_audit(audit_path)]
+    # Bypass event fires per command run during window
+    assert "EMERGENCY_OTP_BYPASS" in events
+    # Normal OTP gate path does NOT fire
+    assert "OTP_REQUESTED" not in events
+    # EXECUTED carries the via_emergency_otp marker
+    executed = [e for e in _read_audit(audit_path) if e["event"] == "EXECUTED"][0]
+    assert executed["via_emergency_otp"] is True
+
+
+async def test_no_active_window_falls_back_to_normal_otp_gate(emergency_dispatcher, make_message, audit_path):
+    """Sanity: the bypass branch only fires when there's actually a
+    window. Without one, the dispatcher does the existing
+    OTP_REQUESTED + stash flow."""
+    dispatcher, _emergency = emergency_dispatcher
+
+    resp = await dispatcher.dispatch(make_message("/restart api", user_id="111"))
+
+    assert "Privileged" in resp.text  # got the OTP prompt
+    events = [e["event"] for e in _read_audit(audit_path)]
+    assert "OTP_REQUESTED" in events
+    assert "EMERGENCY_OTP_BYPASS" not in events
+
+
+async def test_expired_window_falls_back_to_normal_gate(emergency_dispatcher, make_message, audit_path):
+    """A window that aged out between grant and command-time should
+    NOT bypass — same outcome as never-had-a-window."""
+    dispatcher, emergency = emergency_dispatcher
+    # Grant a 1-min window, then mutate the dict directly to a past
+    # expiry so the lazy cleanup path triggers on next access.
+    from datetime import datetime, timedelta, timezone
+
+    emergency.grant("telegram:111", 30)
+    expired = emergency._windows["telegram:111"]
+    # Replace with a window whose expires_at is in the past
+    object.__setattr__(expired, "expires_at", datetime.now(timezone.utc) - timedelta(seconds=1))
+
+    resp = await dispatcher.dispatch(make_message("/restart api", user_id="111"))
+
+    assert "Privileged" in resp.text
+    events = [e["event"] for e in _read_audit(audit_path)]
+    assert "OTP_REQUESTED" in events
+    assert "EMERGENCY_OTP_BYPASS" not in events
+
+
+async def test_safe_command_not_affected_by_emergency_window(emergency_dispatcher, make_message, audit_path):
+    """SAFE commands never went through the OTP gate; an active
+    window changes nothing for them. EXECUTED audit should NOT
+    carry the via_emergency_otp marker (which is reserved for
+    'this command would have needed OTP but skipped it')."""
+    dispatcher, emergency = emergency_dispatcher
+    emergency.grant("telegram:111", 30)
+
+    await dispatcher.dispatch(make_message("/ping", user_id="111"))
+
+    executed = [e for e in _read_audit(audit_path) if e["event"] == "EXECUTED"][0]
+    # via_emergency_otp NOT set (only emitted when the bypass actually
+    # triggered, which it doesn't for SAFE commands).
+    assert "via_emergency_otp" not in executed
+
+
+# NOTE: per-norm_id isolation of EmergencyWindows is pinned at the
+# unit-test layer (tests/auth/test_emergency.py::
+# test_windows_are_per_norm_id). Re-asserting it through the
+# dispatcher would require expanding the shared `app_config`
+# fixture with a second sre-role user (currently only telegram:111
+# has role:sre) — not worth the coupling for a property already
+# covered upstream.
