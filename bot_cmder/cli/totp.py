@@ -1,20 +1,22 @@
-"""Out-of-band admin CLI for bot-cmder.
+"""TOTP-management subcommands for `bot-cmder`.
 
-Currently only manages TOTP enrollments. Run with:
+Three commands, all out-of-band of the running bot:
 
-    uv run python -m bot_cmder.cli enroll-totp --user telegram:111
-    uv run python -m bot_cmder.cli list-totp
-    uv run python -m bot_cmder.cli revoke-totp --user telegram:111
+    bot-cmder enroll-totp --user telegram:111
+    bot-cmder list-totp
+    bot-cmder revoke-totp --user telegram:111
 
 Reads the same Settings / AppConfig as the FastAPI app, so the CLI
-and the running bot share the same SecretStore on disk.
+and the running bot share the same SecretStore on disk. The
+SecretStore path resolves through `state_dir()` (issue #20), so
+prod-style users get `~/.local/state/bot-cmder/totp.sqlite` while
+source contributors with a `./var/` keep using that.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
 
 from bot_cmder.auth.secret_store import SecretStore
 from bot_cmder.auth.totp import TOTPVerifier
@@ -26,7 +28,7 @@ def _open_store(settings: Settings, config: AppConfig) -> SecretStore | None:
     if not settings.bot_cmder_master_key:
         print(
             "ERROR: BOT_CMDER_MASTER_KEY is not set. Generate one with:\n"
-            "  python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'\n"
+            "  bot-cmder gen-master-key\n"
             "Then add it to .env and re-run.",
             file=sys.stderr,
         )
@@ -87,10 +89,12 @@ def cmd_revoke_totp(args: argparse.Namespace) -> int:
     return 1
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="bot-cmder")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
+def add_subparsers(sub: argparse._SubParsersAction) -> None:
+    """Register `enroll-totp`, `list-totp`, `revoke-totp` on the parent
+    dispatcher's subparser group. The parent CLI calls this exactly
+    once at startup; each subcommand stashes its handler via
+    `set_defaults(func=...)` so the dispatcher's `args.func(args)`
+    routes correctly."""
     p_enroll = sub.add_parser("enroll-totp", help="Generate and store a TOTP secret for a user")
     p_enroll.add_argument("--user", required=True, help="Normalized user id, e.g. telegram:111")
     p_enroll.set_defaults(func=cmd_enroll_totp)
@@ -101,10 +105,3 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_revoke = sub.add_parser("revoke-totp", help="Delete a user's TOTP enrollment")
     p_revoke.add_argument("--user", required=True)
     p_revoke.set_defaults(func=cmd_revoke_totp)
-
-    args = parser.parse_args(argv)
-    return args.func(args)
-
-
-if __name__ == "__main__":
-    sys.exit(main())
