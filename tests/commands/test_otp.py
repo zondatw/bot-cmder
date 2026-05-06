@@ -389,3 +389,48 @@ async def test_usage_for_extra_args_on_end_or_status(setup_with_emergency, app_c
     reg, *_ = setup_with_emergency
     assert "usage" in (await reg.get("otp").handler(_ctx(app_config), ["end", "now"])).text
     assert "usage" in (await reg.get("otp").handler(_ctx(app_config), ["status", "verbose"])).text
+
+
+# --- issue #18 — Discord-native /otp code <code> sub-command --------
+
+
+async def test_otp_code_subcommand_resumes_pending_command(setup_with_emergency, app_config, audit_path):
+    """Issue #18 — `/otp code 123456` is the Discord-native form. It
+    must behave identically to bare `/otp 123456`: pop the pending
+    session, verify the code, run the original handler, audit
+    EXECUTED. Without this branch, the dispatcher would treat "code"
+    as the code itself and reject it as invalid."""
+    reg, pending, _totp, _audit, _audit_path_unused, secret, _emergency, _clock = setup_with_emergency
+    pending.stash(
+        user_norm_id="telegram:111",
+        chat_id="42",
+        platform=Platform.TELEGRAM,
+        command_name="restart",
+        args=["api"],
+    )
+    code = pyotp.TOTP(secret).now()
+    resp = await reg.get("otp").handler(_ctx(app_config), ["code", code])
+    assert "restarted ['api']" in resp.text
+    events = _read_audit(audit_path)
+    assert events[-1]["event"] == "EXECUTED"
+    assert events[-1]["command"] == "restart"
+
+
+async def test_otp_code_subcommand_arity_strict(setup_with_emergency, app_config):
+    """`/otp code` (no code) and `/otp code a b` (extra) both bounce
+    to usage hint, not silently misinterpret."""
+    reg, *_ = setup_with_emergency
+    assert "usage" in (await reg.get("otp").handler(_ctx(app_config), ["code"])).text
+    assert "usage" in (await reg.get("otp").handler(_ctx(app_config), ["code", "111111", "extra"])).text
+
+
+async def test_otp_code_subcommand_activates_emergency_window(setup_with_emergency, app_config):
+    """Full Discord-native activation: `/otp emergency 5` then
+    `/otp code <code>` should open the bypass window — same path as
+    `/otp <code>` does on Telegram."""
+    reg, _pending, _totp, _audit, _audit_path, secret, emergency, _clock = setup_with_emergency
+
+    await reg.get("otp").handler(_ctx(app_config), ["emergency", "5"])
+    resp = await reg.get("otp").handler(_ctx(app_config), ["code", pyotp.TOTP(secret).now()])
+    assert "EMERGENCY MODE ACTIVE" in resp.text
+    assert emergency.is_active("telegram:111") is True

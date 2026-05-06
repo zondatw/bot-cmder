@@ -14,7 +14,7 @@ import argparse
 import pytest
 
 from bot_cmder.config.settings import Settings, get_settings
-from scripts.register_discord_commands import _resolve_guild, main
+from scripts.register_discord_commands import _build_command_schema, _resolve_guild, main
 
 
 @pytest.fixture(autouse=True)
@@ -73,3 +73,61 @@ def test_guild_and_global_are_mutually_exclusive():
     # the same mutually_exclusive_group.
     with pytest.raises(SystemExit):
         main(["--guild", "111", "--global"])
+
+
+# --- Issue #18 — /otp gets the SUB_COMMAND treatment ----------------
+
+
+def test_otp_schema_uses_sub_commands():
+    """`/otp` must NOT be a flat-STRING command. Instead it has four
+    SUB_COMMAND children (code / emergency / end / status) so Discord
+    autocomplete renders each variant with its own option schema —
+    crucial because `/otp end` and `/otp status` take no args, and a
+    flat required-STRING option made them literally unreachable from
+    the Discord client UI before this fix."""
+    schema = _build_command_schema("otp", "Submit OTP code, or control emergency-bypass window")
+
+    assert schema["name"] == "otp"
+    assert schema["type"] == 1  # CHAT_INPUT
+
+    sub_names = [opt["name"] for opt in schema["options"]]
+    assert sub_names == ["code", "emergency", "end", "status"]
+
+    by_name = {opt["name"]: opt for opt in schema["options"]}
+    # All four are SUB_COMMAND (option type 1, NOT STRING type 3).
+    for name, sub in by_name.items():
+        assert sub["type"] == 1, f"/otp {name} must be a SUB_COMMAND"
+
+    # `code` carries one required STRING leaf.
+    code_opts = by_name["code"]["options"]
+    assert len(code_opts) == 1
+    assert code_opts[0]["type"] == 3  # STRING
+    assert code_opts[0]["required"] is True
+
+    # `emergency` carries one required INTEGER leaf — Discord will
+    # validate this client-side, so users can't submit "five" by
+    # mistake (Telegram still parses ints from text in the dispatcher).
+    em_opts = by_name["emergency"]["options"]
+    assert len(em_opts) == 1
+    assert em_opts[0]["type"] == 4  # INTEGER
+    assert em_opts[0]["required"] is True
+
+    # `end` and `status` take no inner options.
+    assert "options" not in by_name["end"]
+    assert "options" not in by_name["status"]
+
+
+def test_help_still_no_args():
+    """Sanity check the unrelated `/help` path is untouched."""
+    schema = _build_command_schema("help", "Show command list")
+    assert "options" not in schema
+
+
+def test_default_command_still_uses_flat_args_string():
+    """Anything not /otp / not in _NO_ARGS_COMMANDS keeps the legacy
+    one-STRING-option shape (e.g. /service, /kubectl, /ssh)."""
+    schema = _build_command_schema("service", "Run a service action")
+    assert len(schema["options"]) == 1
+    assert schema["options"][0]["name"] == "args"
+    assert schema["options"][0]["type"] == 3
+    assert schema["options"][0]["required"] is False

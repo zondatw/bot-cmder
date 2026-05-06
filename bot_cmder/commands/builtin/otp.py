@@ -1,11 +1,20 @@
 """`/otp` builtin — TOTP submission + emergency-window control.
 
-Three sub-syntaxes (issue #15 added the last three):
+Sub-syntaxes (issue #15 added the emergency/end/status trio; issue
+#18 added the explicit `code` form for Discord parity):
 
     /otp <6-digit-code>           — submit OTP for a pending privileged
                                      command, OR resume an emergency-
                                      activation request stashed by
-                                     `/otp emergency <minutes>`
+                                     `/otp emergency <minutes>`.
+                                     Telegram-native form (free text).
+    /otp code <6-digit-code>      — same as above. Discord-native form:
+                                     once /otp uses sub-commands for
+                                     emergency/end/status, the bare-
+                                     code path also has to live under
+                                     a sub-command (Discord rule: no
+                                     mixing flat options with sub-
+                                     commands at the same level).
     /otp emergency <minutes>      — start emergency-activation flow:
                                      stashes a session that opens an
                                      OTP-bypass window when satisfied
@@ -102,6 +111,24 @@ def install(
             return _handle_status(ctx, emergency=emergency)
         if sub == "emergency":
             return _handle_emergency_request(ctx, args[1:], pending=pending, audit=audit)
+        if sub == "code":
+            # Issue #18 — Discord-native invocation form `/otp code <code>`.
+            # Discord's slash-command schema can't mix flat options with
+            # sub-commands at the same level, so once /otp uses
+            # sub-commands for emergency/end/status, the bare-code form
+            # also has to live under a sub-command. Telegram users still
+            # use `/otp <code>` (handled by the fall-through below).
+            if len(args) != 2:
+                return OutgoingResponse.text_reply(_USAGE)
+            return await _handle_code(
+                ctx,
+                code=args[1],
+                registry=registry,
+                pending=pending,
+                totp=totp,
+                audit=audit,
+                emergency=emergency,
+            )
 
         # Default: treat sub as a 6-digit OTP code (existing Phase 2
         # contract — strict 1-arg). The handler is shared between
@@ -124,6 +151,7 @@ def install(
 _USAGE = (
     "usage:\n"
     "  /otp <6-digit-code>          — submit OTP for a pending privileged command\n"
+    "  /otp code <6-digit-code>     — same, Discord-native form (see issue #18)\n"
     "  /otp emergency <minutes>     — open OTP-bypass window for incident response\n"
     "  /otp end                     — revoke any active emergency window\n"
     "  /otp status                  — show emergency window state"

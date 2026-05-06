@@ -22,10 +22,14 @@ config). Documented as such in `bot_cmder/config/settings.py`.
 
 Schema is intentionally flat: every top-level Command and every
 Router is one slash command. Commands that take user input get a
-single STRING option (`args` for everything, `code` for /otp). The
-DiscordAdapter recombines /<cmd> <args> back into the same
-text-shaped IncomingMessage Telegram produces, so the dispatcher
-stays platform-agnostic.
+single STRING option named `args`. `/otp` is the one exception —
+it gets four SUB_COMMAND children (`code` / `emergency` / `end` /
+`status`) so Discord's autocomplete UI can prompt for the right
+field per variant; see issue #18 for why the previous flat-string
+schema was unreachable for the no-arg sub-syntaxes. The
+DiscordAdapter recombines /<cmd> <args> (or /<cmd> <sub> <args>)
+back into the same text-shaped IncomingMessage Telegram produces,
+so the dispatcher stays platform-agnostic.
 """
 
 from __future__ import annotations
@@ -50,13 +54,59 @@ _NO_ARGS_COMMANDS = frozenset({"help", "whoami"})
 
 # Per-command override: name + description + required flag for the
 # single STRING option. Anything not listed here defaults to
-# `args` (optional).
-_OPTION_OVERRIDES: dict[str, dict[str, Any]] = {
-    "otp": {"name": "code", "description": "6-digit TOTP code", "required": True},
-}
+# `args` (optional). `/otp` is NOT in this map — it gets the full
+# sub-command treatment below (issue #18) instead of one flat option.
+_OPTION_OVERRIDES: dict[str, dict[str, Any]] = {}
 
 CHAT_INPUT_TYPE = 1
+SUB_COMMAND_TYPE = 1  # option-level (collides numerically with CHAT_INPUT_TYPE — Discord re-uses 1 across both axes)
 STRING_OPTION_TYPE = 3
+INTEGER_OPTION_TYPE = 4
+
+# Issue #18 — `/otp` exposed as four discrete sub-commands so Discord's
+# autocomplete renders each variant with its own option schema. Without
+# this, the legacy single-STRING `code` (required:true) option made
+# `/otp end` and `/otp status` literally unreachable from the Discord
+# client (UI refused to submit with an empty required field) and gave
+# users no hint that the field accepted anything other than 6 digits.
+_OTP_SUB_COMMANDS: list[dict[str, Any]] = [
+    {
+        "name": "code",
+        "description": "Submit a 6-digit TOTP code for a pending privileged command",
+        "type": SUB_COMMAND_TYPE,
+        "options": [
+            {
+                "name": "code",
+                "description": "6-digit TOTP code",
+                "type": STRING_OPTION_TYPE,
+                "required": True,
+            }
+        ],
+    },
+    {
+        "name": "emergency",
+        "description": "Open an OTP-bypass window for incident response (issue #15)",
+        "type": SUB_COMMAND_TYPE,
+        "options": [
+            {
+                "name": "minutes",
+                "description": "Duration in minutes (server caps at totp.emergency_max_minutes)",
+                "type": INTEGER_OPTION_TYPE,
+                "required": True,
+            }
+        ],
+    },
+    {
+        "name": "end",
+        "description": "Revoke any active emergency-bypass window for the caller",
+        "type": SUB_COMMAND_TYPE,
+    },
+    {
+        "name": "status",
+        "description": "Show current emergency-bypass window state",
+        "type": SUB_COMMAND_TYPE,
+    },
+]
 
 
 def _build_command_schema(name: str, description: str) -> dict[str, Any]:
@@ -65,6 +115,14 @@ def _build_command_schema(name: str, description: str) -> dict[str, Any]:
             "name": name,
             "description": description[:100] or name,
             "type": CHAT_INPUT_TYPE,
+        }
+    if name == "otp":
+        # Special-cased — see _OTP_SUB_COMMANDS docstring (issue #18).
+        return {
+            "name": name,
+            "description": description[:100] or name,
+            "type": CHAT_INPUT_TYPE,
+            "options": _OTP_SUB_COMMANDS,
         }
     opt = _OPTION_OVERRIDES.get(
         name,

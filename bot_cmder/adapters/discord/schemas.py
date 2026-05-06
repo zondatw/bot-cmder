@@ -54,16 +54,24 @@ class DiscordMember(BaseModel):
 class InteractionDataOption(BaseModel):
     """One field of an application-command invocation.
 
-    For the MVP slash command schema (one `args` string option per
-    top-level command, plus `code` for /otp) every option we care
-    about has type 3 (STRING) and a `value` string. Sub-command
-    options (type 1/2) are not produced by our schema, so we don't
-    decode them here.
+    Two shapes occur:
+
+      - Leaf option (STRING / INTEGER / etc.): has `value`, no `options`.
+        e.g. `{"name": "args", "type": 3, "value": "restart api"}`
+      - SUB_COMMAND (`type=1`) or SUB_COMMAND_GROUP (`type=2`):
+        no `value`, has nested `options` carrying the actual leaf
+        values. Used by /otp's per-syntax schema (`/otp emergency 5`,
+        `/otp end`, `/otp status`, `/otp code 123456`) — see
+        `scripts/register_discord_commands.py` and issue #18.
+
+    The DiscordAdapter walks the tree once and flattens it back to
+    the same `/cmd args...` text shape Telegram produces.
     """
 
     name: str
     type: int
     value: str | int | float | bool | None = None
+    options: list[InteractionDataOption] | None = None
 
 
 class InteractionData(BaseModel):
