@@ -176,6 +176,64 @@ SQLite) — out of scope for issue #15.
 
 ---
 
+## Brute-force lockout (issue #33)
+
+The OTP gate is rate-limited via a per-norm_id failure counter. Once a user has crossed `max_failures` `OTP_INVALID` events within `failure_window_minutes`, the bot opens a `lockout_minutes` lockout window where EVERY subsequent `/otp <code>` is rejected — even if the code is correct.
+
+Defaults:
+
+| Knob | Default | Why |
+|---|---|---|
+| `enabled` | `true` | Security-by-default. Toggle off in `app.yaml` if you have a strong reason. |
+| `max_failures` | 5 | Typo-friendly without being lax |
+| `lockout_minutes` | 10 | Crushes attacker ROI; legitimate SREs can wait through during an incident |
+| `failure_window_minutes` | 15 | Sliding window — failures older than this fall out of the count |
+
+Config in `app.yaml`:
+
+```yaml
+totp:
+  lockout:
+    enabled: true
+    max_failures: 5
+    lockout_minutes: 10
+    failure_window_minutes: 15
+```
+
+Set `enabled: false` for solo home labs / dogfood / specific SREs who want every OTP_INVALID visible in audit without lockout cutting attempts short.
+
+### Per-norm_id scoping
+
+Locking `slack:U0X...` does NOT lock `telegram:111`, even when both are aliases of the same `id:` in `users:`. Matches the existing OTP enrollment scope, and means an SRE who got locked out on one platform can keep using the bot from another during an incident.
+
+### Persistence
+
+Lockout state is SQLite-backed at `<secret_store_path>/../totp_lockout.sqlite`. Survives bot restart — an attacker can't clear failures by restarting the service. Same SQLite file is what `bot-cmder unlock-totp` writes to (no IPC needed).
+
+### Admin override
+
+```
+$ bot-cmder unlock-totp --user telegram:1234567890
+Cleared lockout state for telegram:1234567890.
+```
+
+Logs `OTP_LOCKOUT_ADMIN_RESET` to audit so the override is traceable. Use case: an SRE locked themselves out at 3am during an incident and needs immediate access.
+
+### Audit signal
+
+When you grep audit for an attack, look for clusters of:
+
+```
+OTP_INVALID    × 5   ← attacker burning through the budget
+OTP_LOCKOUT_TRIGGERED ← lockout fires
+OTP_LOCKED_OUT × N    ← attacker keeps trying, every attempt logs one
+OTP_LOCKOUT_EXPIRED   ← window expired
+```
+
+The `OTP_LOCKED_OUT` events during the window are the noise multiplier — attackers can't tell the bot is rejecting them, so they keep trying, and every attempt logs an audit row that you'll grep when investigating later.
+
+---
+
 ## Audit event reference
 
 | Event | Emitted by | When |
@@ -192,3 +250,7 @@ SQLite) — out of scope for issue #15.
 | `EMERGENCY_OTP_BYPASS` | dispatcher | Each PRIVILEGED command run during an active window |
 | `EMERGENCY_OTP_REVOKED` | `/otp` | `/otp end` on an active window |
 | `EMERGENCY_OTP_INVALID_DURATION` | `/otp` | `/otp emergency <bad-value>` (non-int or <1) |
+| `OTP_LOCKOUT_TRIGGERED` | `/otp` | Failure count crossed threshold — lockout opened |
+| `OTP_LOCKED_OUT` | `/otp` | `/otp <code>` attempted while locked (one row per attempt during the window) |
+| `OTP_LOCKOUT_EXPIRED` | `/otp` | First `/otp` after expiry — marks the unlock transition |
+| `OTP_LOCKOUT_ADMIN_RESET` | `bot-cmder unlock-totp` | Admin CLI cleared a lockout |

@@ -127,7 +127,60 @@ class AuditConfig(_NullableDefaults):
     rotation: AuditRotationConfig = Field(default_factory=AuditRotationConfig)
 
 
-class TOTPConfig(BaseModel):
+class OTPLockoutConfig(BaseModel):
+    """Issue #33 — OTP brute-force lockout policy.
+
+    Per-norm_id state machine. After `max_failures` consecutive
+    `OTP_INVALID` events within `failure_window_minutes`, the user
+    gets locked out for `lockout_minutes`. During lockout EVERY
+    `/otp <code>` is rejected (audit `OTP_LOCKED_OUT`) — even if
+    the code is correct — so an attacker who eventually stumbles
+    onto the right code still can't burn through. Successful OTP
+    outside lockout resets the failure count.
+
+    Defaults are tuned for a typical SRE incident: 5 attempts gives
+    legitimate users plenty of typo room; 10-min lockout is short
+    enough to wait through during a real incident, long enough to
+    crush attacker ROI.
+
+    Per-norm_id scoping: locking `slack:U0X...` does NOT lock
+    `telegram:111`, even when both are aliases of the same `id:`
+    in `users:`. Matches the existing OTP enrollment scoping —
+    locking out compromised platforms while keeping the un-
+    compromised ones usable for incident response.
+    """
+
+    # Master switch. Default ON — security-by-default, matches the
+    # README's "strong defaults you can live with" pitch. Set to
+    # false for solo home labs / dogfood environments / specific
+    # SREs who want every failure visible in audit without lockout
+    # cutting attempts short.
+    enabled: bool = True
+
+    # Failure count that triggers lockout. 5 leaves typo headroom
+    # without being lax.
+    max_failures: int = 5
+
+    # Lockout duration once triggered.
+    lockout_minutes: int = 10
+
+    # Sliding window over which failures are counted. Failures older
+    # than this fall out of the count, so a single typo at 9am
+    # followed by another at 3pm doesn't pile up.
+    failure_window_minutes: int = 15
+
+    @model_validator(mode="after")
+    def _check_positive(self) -> OTPLockoutConfig:
+        if self.max_failures < 1:
+            raise ValueError(f"totp.lockout.max_failures must be >= 1, got {self.max_failures}")
+        if self.lockout_minutes < 1:
+            raise ValueError(f"totp.lockout.lockout_minutes must be >= 1, got {self.lockout_minutes}")
+        if self.failure_window_minutes < 1:
+            raise ValueError(f"totp.lockout.failure_window_minutes must be >= 1, got {self.failure_window_minutes}")
+        return self
+
+
+class TOTPConfig(_NullableDefaults):
     """Phase 2 TOTP-gating settings."""
 
     # Same default_factory pattern as AuditConfig.path — see issue #20.
@@ -146,6 +199,12 @@ class TOTPConfig(BaseModel):
     # this number. Tunable per deployment but defaults are
     # deliberately conservative.
     emergency_max_minutes: int = 60
+    # Issue #33 — brute-force lockout. Default ON; tune in app.yaml
+    # under `totp.lockout:` or omit the block entirely to take the
+    # defaults. Set `enabled: false` to opt out of lockout entirely
+    # (the bot still records OTP_INVALID, just doesn't act on the
+    # count).
+    lockout: OTPLockoutConfig = Field(default_factory=OTPLockoutConfig)
 
 
 class KubectlConfig(BaseModel):

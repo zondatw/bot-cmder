@@ -53,6 +53,7 @@ from bot_cmder.core.registry import CommandRegistry, Risk, register
 if TYPE_CHECKING:
     from bot_cmder.audit.log import AuditLogger
     from bot_cmder.auth.emergency import EmergencyWindows
+    from bot_cmder.auth.lockout import OTPLockoutState
     from bot_cmder.auth.pending import PendingOTPSessions
     from bot_cmder.auth.totp import TOTPVerifier
 
@@ -72,12 +73,20 @@ def install(
     totp: TOTPVerifier,
     audit: AuditLogger,
     emergency: EmergencyWindows | None = None,
+    lockout: OTPLockoutState | None = None,
 ) -> None:
     """Register `/otp` with the registry.
 
     `emergency` is optional for backwards compatibility — Phase 1-7
     tests that build a registry without it (no emergency flow) still
     work; the new sub-commands return a usage hint instead of crashing.
+
+    `lockout` (issue #33) is also optional for backwards compatibility.
+    When wired, the handler pre-checks for an active lockout BEFORE
+    popping the pending session — a locked-out user can't burn through
+    pending sessions either. After OTP_INVALID, the failure is recorded
+    and may trigger a fresh lockout. After successful verify, the
+    failure counter resets.
     """
 
     @register(
@@ -128,6 +137,7 @@ def install(
                 totp=totp,
                 audit=audit,
                 emergency=emergency,
+                lockout=lockout,
             )
 
         # Default: treat sub as a 6-digit OTP code (existing Phase 2
@@ -145,6 +155,7 @@ def install(
             totp=totp,
             audit=audit,
             emergency=emergency,
+            lockout=lockout,
         )
 
 
@@ -257,10 +268,49 @@ async def _handle_code(
     totp: TOTPVerifier,
     audit: AuditLogger,
     emergency: EmergencyWindows | None,
+    lockout: OTPLockoutState | None = None,
 ) -> OutgoingResponse:
     """Submit OTP code. Branches on what the popped pending session
     represents — a real command resume, or an emergency-activation
-    request stashed by `_handle_emergency_request`."""
+    request stashed by `_handle_emergency_request`.
+
+    Issue #33 — pre-flight lockout check runs BEFORE pop()ping the
+    pending session, so a locked-out user can't burn through pending
+    sessions while their lockout window is active. After OTP_INVALID,
+    the failure is recorded; after successful verify, the failure
+    counter resets.
+    """
+    # Issue #33 pre-flight — check lockout BEFORE popping the pending
+    # session. snapshot() doesn't mutate, so we can detect both
+    # "still locked" and "just expired" cases without touching state.
+    if lockout is not None and lockout.enabled:
+        snap = lockout.snapshot(ctx.user.norm_id)
+        if snap.locked:
+            audit.log(
+                event="OTP_LOCKED_OUT",
+                platform=ctx.platform.value,
+                user=ctx.user.norm_id,
+                chat=ctx.chat_id,
+                remaining_s=snap.remaining_s(datetime.now(timezone.utc)),
+                failure_count=snap.failure_count,
+            )
+            remaining_min = (snap.remaining_s(datetime.now(timezone.utc)) + 59) // 60
+            return OutgoingResponse.text_reply(
+                f"OTP locked out (~{remaining_min} min remaining) after repeated failures. "
+                "Wait or contact admin (`bot-cmder unlock-totp`)."
+            )
+        if snap.locked_until is not None:
+            # Had a lockout that just expired — log the transition,
+            # clean up, then fall through to normal verification.
+            audit.log(
+                event="OTP_LOCKOUT_EXPIRED",
+                platform=ctx.platform.value,
+                user=ctx.user.norm_id,
+                chat=ctx.chat_id,
+                expired_at=snap.locked_until.isoformat(),
+            )
+            lockout.reset(ctx.user.norm_id)
+
     session = pending.pop(ctx.user.norm_id)
     if session is None:
         audit.log(
@@ -301,9 +351,32 @@ async def _handle_code(
             chat=ctx.chat_id,
             command=session.command_name,
         )
+        # Issue #33 — record this failure, possibly trigger lockout.
+        if lockout is not None and lockout.enabled:
+            triggered = lockout.record_failure(ctx.user.norm_id)
+            if triggered:
+                snap = lockout.snapshot(ctx.user.norm_id)
+                audit.log(
+                    event="OTP_LOCKOUT_TRIGGERED",
+                    platform=ctx.platform.value,
+                    user=ctx.user.norm_id,
+                    chat=ctx.chat_id,
+                    failure_count=snap.failure_count,
+                    remaining_s=snap.remaining_s(datetime.now(timezone.utc)),
+                    locked_until=snap.locked_until.isoformat() if snap.locked_until else None,
+                )
+                return OutgoingResponse.text_reply(
+                    f"invalid code; locked out for ~{(snap.remaining_s(datetime.now(timezone.utc)) + 59) // 60} min "
+                    f"after {snap.failure_count} failures"
+                )
         return OutgoingResponse.text_reply("invalid code")
 
-    # ✓ OTP verified. Branch on session type.
+    # ✓ OTP verified. Issue #33 — clear failure counter so a one-shot
+    # typo doesn't accumulate forever.
+    if lockout is not None and lockout.enabled:
+        lockout.reset(ctx.user.norm_id)
+
+    # Branch on session type.
     if session.command_name == _EMERGENCY_ACTIVATE_TAG:
         return _activate_emergency_window(ctx, session.args, emergency=emergency, audit=audit)
 

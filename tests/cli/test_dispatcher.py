@@ -27,6 +27,7 @@ def test_help_lists_all_subcommands(capsys):
         "enroll-totp",
         "list-totp",
         "revoke-totp",
+        "unlock-totp",
         "discord-register",
         "slack-manifest",
     ):

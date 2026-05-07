@@ -19,9 +19,20 @@ from cryptography.fernet import Fernet
 @pytest.fixture(autouse=True)
 def _isolated_env(tmp_path: Path, monkeypatch):
     """Point Settings + AppConfig at a tmp dir so we don't touch real
-    .env / config/app.yaml / var/."""
+    .env / config/app.yaml / var/.
+
+    Also isolate HOME + XDG_STATE_HOME so `state_dir()` resolves
+    inside tmp_path — without this, the lockout SQLite (issue #33)
+    lands in the host's real `~/.local/state/bot-cmder/` and stale
+    schema from prior runs trips ChecksumMismatch.
+    """
     monkeypatch.setenv("BOT_CMDER_MASTER_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("APP_CONFIG_PATH", str(tmp_path / "missing.yaml"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("BOT_CMDER_STATE_DIR", raising=False)
+    monkeypatch.delenv("BOT_CMDER_CONFIG_DIR", raising=False)
     monkeypatch.delenv("TELEGRAM_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
     monkeypatch.chdir(tmp_path)
@@ -169,7 +180,7 @@ def test_slack_socket_mode_without_app_token_disables_adapter(monkeypatch):
     assert "/webhooks/slack" not in paths
 
 
-def test_create_app_registers_every_builtin():
+def test_create_app_registers_every_builtin(tmp_path):
     """Regression: install_all() must register every Phase 1 + 2 + 3
     builtin into the registry — not silently skip ones whose install
     function isn't wired into install_all()."""
@@ -182,8 +193,8 @@ def test_create_app_registers_every_builtin():
     from bot_cmder.connectors.ssh import SshConnectorPool
     from bot_cmder.core.registry import CommandRegistry
 
-    audit = AuditLogger("/tmp/_audit.jsonl")  # noqa: S108
-    store = SecretStore("/tmp/_t.sqlite", Fernet.generate_key().decode())  # noqa: S108
+    audit = AuditLogger(tmp_path / "audit.jsonl")
+    store = SecretStore(tmp_path / "totp.sqlite", Fernet.generate_key().decode())
     totp = TOTPVerifier(store)
     pending = PendingOTPSessions()
     pool = SshConnectorPool({}, SshConnectorConfig())

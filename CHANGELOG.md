@@ -12,6 +12,33 @@ section gets renamed to `## [0.X.Y] - YYYY-MM-DD` (see
 
 ## [Unreleased]
 
+### Added
+
+- OTP brute-force lockout. After `max_failures` `OTP_INVALID` events
+  within `failure_window_minutes`, the user gets locked out for
+  `lockout_minutes`; while locked, every `/otp <code>` is rejected
+  (audit `OTP_LOCKED_OUT`) — even the correct one. Per-norm_id
+  scoping (locking `slack:U0X...` doesn't lock `telegram:111`).
+  SQLite-backed at `<state_dir>/totp_lockout.sqlite` so state
+  survives bot restart. Defaults: 5 failures / 10-min lockout /
+  15-min sliding window. Tunable in `app.yaml` under
+  `totp.lockout:`. ([#34], closes [#33])
+- `bot-cmder unlock-totp --user <norm_id>` admin CLI to clear
+  lockout state (logs `OTP_LOCKOUT_ADMIN_RESET` for traceability).
+  Use case: SRE locks themselves out at 3am during an incident
+  and needs immediate access. ([#34])
+- New audit events: `OTP_LOCKOUT_TRIGGERED`, `OTP_LOCKED_OUT`,
+  `OTP_LOCKOUT_EXPIRED`, `OTP_LOCKOUT_ADMIN_RESET`. ([#34])
+
+### Changed
+
+- **BEHAVIOR CHANGE (default-on)**: OTP lockout is enabled by
+  default. Existing deployments upgrading to this version
+  will start locking out users who fail OTP 5 times in 15 min.
+  Set `totp.lockout.enabled: false` in `app.yaml` to opt out
+  (audit log still records `OTP_INVALID` per attempt — just no
+  lockout fires). ([#34])
+
 ## [0.2.0] - 2026-05-07
 
 First PyPI release. The bot is now `pip install bot-cmder`-able plus a
@@ -115,3 +142,5 @@ container image at `ghcr.io/zondatw/bot-cmder:0.2.0`.
 [#24]: https://github.com/zondatw/bot-cmder/pull/24
 [#25]: https://github.com/zondatw/bot-cmder/issues/25
 [#26]: https://github.com/zondatw/bot-cmder/pull/26
+[#33]: https://github.com/zondatw/bot-cmder/issues/33
+[#34]: https://github.com/zondatw/bot-cmder/pull/34

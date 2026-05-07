@@ -22,6 +22,8 @@ from bot_cmder.adapters.telegram.daemon import TelegramDaemon
 from bot_cmder.audit.log import AuditLogger
 from bot_cmder.auth.acl import check_allowed
 from bot_cmder.auth.emergency import EmergencyWindows
+from bot_cmder.auth.lockout import OTPLockoutState
+from bot_cmder.auth.lockout_store import LockoutStore
 from bot_cmder.auth.pending import PendingOTPSessions
 from bot_cmder.auth.secret_store import SecretStore
 from bot_cmder.auth.totp import TOTPVerifier
@@ -97,6 +99,29 @@ def create_app() -> FastAPI:
     # since the activation flow piggybacks on PendingOTPSessions; if
     # `pending` is None (no master key) emergency stays unused too.
     emergency = EmergencyWindows(max_minutes=config.totp.emergency_max_minutes)
+    # Issue #33 — OTP brute-force lockout. SQLite-backed so state
+    # survives bot restart (an attacker can't clear failures by
+    # restarting the service) and so `bot-cmder unlock-totp` admin
+    # CLI can talk to the same file without IPC. Stored next to the
+    # TOTP secret store for locality. Wired only when the TOTP
+    # triad is up — locked-out semantics aren't meaningful without
+    # a working OTP gate to begin with.
+    lockout: OTPLockoutState | None = None
+    if pending is not None and totp is not None:
+        lockout_store = LockoutStore(config.totp.secret_store_path.parent / "totp_lockout.sqlite")
+        lockout = OTPLockoutState(lockout_store, config.totp.lockout)
+        if config.totp.lockout.enabled:
+            logger.info(
+                "OTP lockout enabled: max_failures=%d, lockout=%dm, window=%dm",
+                config.totp.lockout.max_failures,
+                config.totp.lockout.lockout_minutes,
+                config.totp.lockout.failure_window_minutes,
+            )
+        else:
+            logger.warning(
+                "OTP lockout DISABLED in config — brute-force attempts won't be rate-limited; "
+                "OTP_INVALID still audited but no lockout fires"
+            )
     ssh_pool = SshConnectorPool(config.hosts, config.ssh)
     if config.hosts:
         logger.info(
@@ -112,6 +137,7 @@ def create_app() -> FastAPI:
         ssh_pool=ssh_pool,
         config=config,
         emergency=emergency,
+        lockout=lockout,
     )
 
     dispatcher = Dispatcher(
