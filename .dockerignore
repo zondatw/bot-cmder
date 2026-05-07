@@ -1,0 +1,69 @@
+# Keep the build context small + deterministic — only the files that
+# the wheel build actually needs. Everything else is either:
+#   - re-derivable (.venv, dist, __pycache__)
+#   - state that doesn't belong in an image (var, .env)
+#   - irrelevant to the runtime (tests, docs, CI configs)
+#   - agent-local (.claude)
+
+# Version control + IDE state
+.git
+.gitignore
+.gitleaks.toml
+.gitattributes
+.editorconfig
+.vscode
+.idea
+
+# Agent worktrees, plans, ephemeral state
+.claude
+
+# Python build / test artifacts
+.venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+**/__pycache__
+**/*.pyc
+**/*.pyo
+
+# Local build outputs (wheels are rebuilt inside the builder stage)
+dist
+build
+*.egg-info
+
+# Repo-local bot state (never ship audit logs, totp secrets, etc.)
+var
+runbooks
+
+# Operator config — must be mounted at runtime, never baked in
+.env
+.env.example
+.env.local
+config/app.yaml
+config/app.yaml.local
+
+# Tests + dev-only files don't run inside the image
+tests
+.pre-commit-config.yaml
+
+# Docs, examples, scripts that don't ship in the wheel
+docs
+scripts/tunnel*.sh
+scripts/show_env_settings.py
+scripts/hook_status.py
+
+# CI configuration — building from source doesn't need these inside
+# the container, GitHub Actions reads them from the repo directly
+.github
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Justfile — only needed for source contributors, not in the image
+Justfile

@@ -1,0 +1,162 @@
+# Docker image build + GHCR publish — issue #25.
+#
+# Branch-based pattern parallel to PyPI (.github/workflows/{beta,release}.yml):
+#
+#   PR / push to feature branch    → build smoke (no push)
+#   push to main                   → push tag `main`
+#   push to beta                   → push tag `beta`
+#   push to release                → push tags `latest` + the version from
+#                                    bot_cmder/__init__.py (e.g. 0.2.0)
+#
+# Multi-arch (linux/amd64 + linux/arm64) via docker buildx + QEMU.
+# arm64 emulation is slow (~5 min on ubuntu-latest); acceptable for an
+# SRE bot's release cadence (weeks, not minutes). If the cadence ever
+# accelerates and arm64 becomes a bottleneck, swap to a native arm64
+# runner via GitHub Actions `larger runners` — same job structure
+# minus the QEMU setup step.
+#
+# Auth: the auto-provisioned GITHUB_TOKEN with `packages: write` —
+# zero external secrets to set up. After the first push the package
+# appears under https://github.com/zondatw?tab=packages; flip
+# visibility to Public once at
+# https://github.com/users/zondatw/packages/container/bot-cmder/settings.
+
+name: docker
+
+on:
+  pull_request:
+  push:
+    branches: [main, beta, release]
+
+# One docker publish at a time per branch — don't race two pushes
+# for the same tag, and don't waste CI on a stale commit if the
+# user force-pushes immediately.
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: build (multi-arch)
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to push to GHCR. Read-only checkout is implied; no
+      # extra `contents` scope needed beyond default.
+      packages: write
+      contents: read
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v6
+
+      # QEMU lets the amd64 runner emulate arm64 builds. Without this,
+      # `--platform linux/arm64` on the build step would fail with
+      # "no matching manifest" on the runner's amd64 host.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Login is only needed when we'll actually push (PRs build but
+      # don't push). Skipping it on PRs means forks can run the build
+      # smoke without needing GHCR write access — security-relevant
+      # because PR triggers from forks otherwise need extra scrutiny.
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Read bot_cmder/__init__.py:__version__ so the `release` push
+      # can tag both `latest` and the literal version (e.g. 0.2.0).
+      # docker/metadata-action's built-in semver patterns assume git
+      # tags, but our publish trigger is branch-based, not tag-based —
+      # so we extract from the source.
+      - name: Read package version
+        id: version
+        run: |
+          set -euo pipefail
+          VER=$(python3 -c "import re, pathlib; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', pathlib.Path('bot_cmder/__init__.py').read_text()).group(1))")
+          echo "Version: $VER"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      # Computes the full set of `image:tag` strings to push. Logic:
+      #   - PR / non-tracked branch        → tag :pr-<sha>     (build only, no push)
+      #   - push to main                   → tag :main
+      #   - push to beta                   → tag :beta
+      #   - push to release                → tags :latest + :<version> (e.g. :0.2.0)
+      - name: Compute image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${{ github.repository_owner }}/bot-cmder"
+          # Lowercased — GHCR rejects uppercase repo names. The owner
+          # `zondatw` is already lowercase but defensive normalization
+          # keeps the workflow portable to forks.
+          IMAGE=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            TAGS="${IMAGE}:pr-${{ github.event.pull_request.number }}"
+          elif [[ "${{ github.ref }}" == "refs/heads/release" ]]; then
+            TAGS="${IMAGE}:latest,${IMAGE}:${{ steps.version.outputs.version }}"
+          elif [[ "${{ github.ref }}" == "refs/heads/beta" ]]; then
+            TAGS="${IMAGE}:beta"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            TAGS="${IMAGE}:main"
+          else
+            # Feature branch outside the tracked set — build only, no push
+            TAGS="${IMAGE}:dev"
+          fi
+          echo "Tags: $TAGS"
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+
+      - name: Build (and push if not PR)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          # Cache to GHA's built-in layer cache — survives across runs
+          # of this workflow on the same arch. Speeds up rebuilds when
+          # only Python source changed; the python:3.12-slim base layer
+          # gets reused.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # OCI labels declared in the Dockerfile already cover
+          # source / description / license. Nothing extra needed here.
+
+      # Smoke check on the just-built image. Pulls the image from the
+      # local builder cache (not GHCR — for PR builds GHCR doesn't
+      # have it yet), runs `bot-cmder --version`, asserts the output
+      # matches `bot-cmder X.Y.Z`. Catches regressions where the
+      # wheel built fine but the entrypoint chain (PATH, venv,
+      # script shim) is broken.
+      #
+      # Only runs on amd64 (the runner's native arch) — running an
+      # arm64 image under QEMU just to read --version is overkill,
+      # and the arm64 build itself failing would have already turned
+      # this job red.
+      - name: Smoke test (--version)
+        run: |
+          set -euo pipefail
+          # Re-build a single-arch tag pointing at the local cache
+          # so we can `docker run` it. build-push-action with
+          # multi-arch + push:false leaves nothing locally addressable;
+          # this single-platform local build is fast (cache reuse).
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag bot-cmder:smoke \
+            --load \
+            --cache-from type=gha \
+            .
+          OUT=$(docker run --rm bot-cmder:smoke --version)
+          echo "Got: $OUT"
+          echo "$OUT" | grep -qE '^bot-cmder [0-9]+\.[0-9]+\.[0-9]+' || (
+            echo "ERROR: --version output didn't match 'bot-cmder X.Y.Z'"
+            exit 1
+          )

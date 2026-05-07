@@ -101,6 +101,28 @@ uv run bot-cmder serve --reload
 
 The from-source flow uses `./config/app.yaml`, `./.env`, and `./var/` (CWD-relative), preserving the Phase 1-7 dev workflow exactly.
 
+### Via Docker / GHCR
+
+```shell
+docker pull ghcr.io/zondatw/bot-cmder:latest
+
+# One-time scaffold into a named volume
+docker run --rm -it -v bot-cmder-cfg:/etc/bot-cmder \
+  ghcr.io/zondatw/bot-cmder:latest init --config-dir /etc/bot-cmder
+
+# Run
+docker run -d --name bot-cmder \
+  -v bot-cmder-cfg:/etc/bot-cmder:ro \
+  -v bot-cmder-state:/var/lib/bot-cmder \
+  -p 47823:47823 \
+  --restart unless-stopped \
+  ghcr.io/zondatw/bot-cmder:latest
+```
+
+Multi-arch (amd64 + arm64), <150 MB compressed. Image tags: `latest` /
+`0.X.Y` / `beta` / `main`. Full walkthrough including k8s + Compose
+examples in [`docs/docker.md`](docs/docker.md).
+
 ### Config file locations
 
 `bot-cmder` searches for `app.yaml` (and `.env`, and the state dir) in this order, returning the first hit:

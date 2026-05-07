@@ -132,3 +132,25 @@ register-discord *args:
 # `--request-url <url>` to override per call.
 register-slack *args:
     uv run bot-cmder slack-manifest "$@"
+
+# Phase 9 — Docker image build (native arch only, fast). For multi-arch
+# use `docker buildx build --platform linux/amd64,linux/arm64 .` — used by
+# the release workflow, not typically needed for local dev.
+docker-build:
+    docker build -t bot-cmder:local .
+
+# Run the locally-built image with config + state mounted out of the
+# repo's ./config/ + ./var/. Convenient for "does the wheel-install
+# path of the bot actually serve?" loops.
+docker-run:
+    docker run --rm -it \
+        -v "$(pwd)/config:/etc/bot-cmder:ro" \
+        -v "$(pwd)/var:/var/lib/bot-cmder" \
+        -p 47823:47823 \
+        bot-cmder:local
+
+# Drop into a shell inside the image — useful for poking around the
+# venv layout or verifying mounted files are readable as the
+# `botcmder` user (UID 1000).
+docker-shell:
+    docker run --rm -it --entrypoint sh bot-cmder:local
