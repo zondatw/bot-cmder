@@ -51,12 +51,80 @@ class ACLConfig(_NullableDefaults):
     commands: dict[str, list[str]] = Field(default_factory=dict)
 
 
-class AuditConfig(BaseModel):
+class AuditRotationConfig(BaseModel):
+    """Issue #28 — built-in audit log rotation.
+
+    Two-axis trigger: rotate when the active file passes `max_bytes`
+    OR when the wall clock crosses the `when` boundary, whichever
+    fires first. Rotated files renamed to `audit.jsonl.<ts>` (UTC,
+    filesystem-safe), gzipped if `compress=True`, and the oldest
+    pruned past `backup_count`.
+
+    Defaults are tuned for a typical SRE deployment:
+        * 100 MB size cap → reasonable forensic file size
+        * daily midnight UTC rotation → matches "what happened on date X"
+          query phrasing
+        * 7 backups → one week of history at daily rotation
+        * gzip on → JSONL compresses ~10x, retention budget stretches
+
+    Disable rotation entirely by setting `max_bytes=0` AND `when="off"`.
+    """
+
+    # Active file size at which rotation fires. 0 disables size-based
+    # rotation (then `when` must be set to anything other than "off").
+    max_bytes: int = 100_000_000
+
+    # Time-based trigger. One of:
+    #   "off"      — no time-based rotation (only size triggers)
+    #   "hourly"   — rotate at top of every UTC hour
+    #   "daily"    — rotate every 24h after the first write
+    #   "midnight" — rotate at UTC 00:00 (alias for "daily" anchored
+    #                to wall-clock midnight, common forensics phrasing)
+    #   "weekly"   — rotate Mondays at UTC 00:00
+    when: str = "midnight"
+
+    # Number of rotated files to retain before unlinking the oldest.
+    # 0 disables pruning (let the operator + filesystem fill up — risky
+    # but matches the pre-rotation behavior on a renamed file).
+    backup_count: int = 7
+
+    # Gzip rotated files. JSONL compresses ~10x; cheap CPU at rotation
+    # time, big disk savings. Off if you want rotated files immediately
+    # `tail -f`-able without `gunzip -c`.
+    compress: bool = True
+
+    @model_validator(mode="after")
+    def _check_when_and_max_bytes(self) -> AuditRotationConfig:
+        valid_when = {"off", "hourly", "daily", "midnight", "weekly"}
+        if self.when not in valid_when:
+            raise ValueError(f"audit.rotation.when must be one of {sorted(valid_when)}, got {self.when!r}")
+        if self.max_bytes < 0:
+            raise ValueError(f"audit.rotation.max_bytes must be >= 0, got {self.max_bytes}")
+        if self.backup_count < 0:
+            raise ValueError(f"audit.rotation.backup_count must be >= 0, got {self.backup_count}")
+        if self.max_bytes == 0 and self.when == "off":
+            # Both triggers disabled — explicit, but worth surfacing
+            # so an operator who set `when: off` and forgot to also
+            # set max_bytes doesn't end up with infinite single-file
+            # growth thinking they configured rotation.
+            # We don't raise (it's a valid configuration — "I really
+            # do want unbounded growth, e.g. external rotation handles
+            # it"), but the AuditLogger logs a warning at startup.
+            pass
+        return self
+
+
+class AuditConfig(_NullableDefaults):
     # Default resolves at instantiation time, not class-definition time,
     # so changing CWD or env vars between import and AppConfig() works
     # as expected. Issue #20: dev workflow keeps writing to ./var/ when
     # ./var/ exists; installed users get $XDG_STATE_HOME/bot-cmder/.
     path: Path = Field(default_factory=lambda: state_dir() / "audit.jsonl")
+    # Issue #28 — rotation config. Default: daily midnight UTC, 100 MB
+    # size cap, 7 backups, gzipped. Override fields individually in
+    # app.yaml under `audit.rotation:`; omit the block entirely to
+    # take the defaults.
+    rotation: AuditRotationConfig = Field(default_factory=AuditRotationConfig)
 
 
 class TOTPConfig(BaseModel):

@@ -88,7 +88,7 @@ def create_app() -> FastAPI:
     config = load_app_config(settings)
 
     registry = CommandRegistry()
-    audit = AuditLogger(config.audit.path)
+    audit = AuditLogger(config.audit.path, rotation=config.audit.rotation)
 
     totp, pending = _build_totp(settings, config)
     # Issue #15 — emergency OTP-bypass windows. In-memory store; the
