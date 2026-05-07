@@ -9,7 +9,7 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram (D
 **Phase 1** — multi-platform foundation
 - FastAPI service exposing `POST /webhooks/telegram` and `GET /healthz`.
 - Telegram adapter on `httpx` (no URL-encoding bugs from the legacy demo).
-- `CommandRegistry` + decorator-style registration; `Dispatcher` with structured JSONL audit log.
+- `CommandRegistry` + decorator-style registration; `Dispatcher` with structured JSONL audit log (built-in size + time rotation, gzipped — see [`docs/audit-rotation.md`](docs/audit-rotation.md)).
 - ACL via YAML config: per-command allow lists and `role:<name>` expansion.
 - Builtins: `/help`, `/whoami`, `/health [target ...]`.
 

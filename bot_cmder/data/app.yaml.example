@@ -75,13 +75,43 @@ healthcheck:
 # ---------------------------------------------------------------------
 # Every command attempt, ACL deny, OTP event, SSH connection,
 # emergency-bypass grant/use/revoke gets a JSONL line here. Treat as
-# tamper-evidence + post-mortem source. Rotate / archive externally
-# (logrotate, vector, fluent-bit) — bot-cmder doesn't.
+# tamper-evidence + post-mortem source.
+#
+# Rotation (issue #28) is built in. Defaults are tuned for a typical
+# SRE deployment: daily UTC midnight rotation, 100 MB hard size cap,
+# 7 backups (one week), gzipped. Override per field below; omit the
+# rotation block entirely to take the defaults.
 
 audit:
   # Absolute path strongly recommended in prod. The parent directory
   # must exist before `bot-cmder serve` starts.
   path: ./var/audit.jsonl
+
+  rotation:
+    # Hard size cap on the active file. When the next write would
+    # push it past this many bytes, rotate. 0 disables size-based
+    # rotation (then `when` must be set to anything other than "off").
+    max_bytes: 100000000   # 100 MB
+
+    # Time-based trigger. One of:
+    #   "off"      — no time-based rotation (only size triggers)
+    #   "hourly"   — rotate at top of every UTC hour
+    #   "daily"    — rotate every 24h after the first write
+    #   "midnight" — rotate at UTC 00:00 (daily, anchored to wall-clock
+    #                midnight; matches "what happened on date X"
+    #                forensics queries)
+    #   "weekly"   — rotate Mondays at UTC 00:00
+    when: midnight
+
+    # Number of rotated files to retain before unlinking the oldest.
+    # 0 disables pruning (lets old files accumulate without bound —
+    # use only with external retention management).
+    backup_count: 7
+
+    # Gzip rotated files. JSONL compresses ~10x; cheap CPU at rotation
+    # time, big disk savings. Set false if you want rotated files
+    # immediately tail-able without `gunzip -c`.
+    compress: true
 
 # ---------------------------------------------------------------------
 # Phase 2 — TOTP gate for PRIVILEGED commands
