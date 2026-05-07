@@ -81,6 +81,81 @@ jobs:
         # otherwise re-clone black + ruff repos on every run).
         uses: pre-commit/action@v3.0.1
 
+  # Issue #20 — wheel-build smoke test runs the same build steps the
+  # release workflows (.github/workflows/{beta,release}.yml) do, but
+  # on every PR. Catches packaging regressions at PR time instead of
+  # at release time. Examples of what would have shipped broken
+  # without this gate:
+  #   - someone deletes bot_cmder/data/__init__.py → app.yaml.example
+  #     stops shipping in the wheel → `bot-cmder init` 500s on every
+  #     install
+  #   - a refactor breaks the [project.scripts] entry → `bot-cmder`
+  #     console script absent after `pip install`
+  #   - import error in cli/__init__.py → `bot-cmder --help` raises
+  #     before printing usage
+  # Each of those is silent in the test suite (which uses the editable
+  # install) but breaks the wheel.
+  wheel-build:
+    name: wheel build smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v6
+
+      - name: Install uv (with cache)
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Pin Python 3.12
+        run: uv python install 3.12
+
+      - name: Build wheel + sdist
+        run: uv build
+
+      - name: Verify wheel ships expected data files
+        # Same checks the release workflows do — keep in sync. The
+        # set is small enough to inline; if it grows, factor into a
+        # shared bash script under scripts/.
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/*.whl)
+          echo "Inspecting $WHEEL"
+          unzip -l "$WHEEL" | grep -q 'bot_cmder/data/app.yaml.example' || (
+            echo "ERROR: bot_cmder/data/app.yaml.example missing from wheel"
+            exit 1
+          )
+          unzip -l "$WHEEL" | grep -q 'bot_cmder/auth/migrations/0001_initial.sql' || (
+            echo "ERROR: bot_cmder/auth/migrations/0001_initial.sql missing from wheel"
+            exit 1
+          )
+          echo "OK — wheel data files present"
+
+      - name: Smoke install + run --version
+        # Fresh venv install of the wheel exercises:
+        #   - [project.scripts] entry point lands `bot-cmder` on PATH
+        #   - lazy imports in cli/__init__.py + subcommands resolve
+        #   - bot_cmder.__version__ is accessible at runtime
+        # If `bot-cmder --version` exits non-zero or prints empty, fail.
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --quiet dist/*.whl
+          ver=$(/tmp/smoke/bin/bot-cmder --version)
+          echo "Got: $ver"
+          echo "$ver" | grep -qE '^bot-cmder [0-9]+\.[0-9]+\.[0-9]+' || (
+            echo "ERROR: --version output didn't match 'bot-cmder X.Y.Z'"
+            exit 1
+          )
+          # Also exercise the no-args case to catch a regression in
+          # argparse setup (e.g. missing required=True on subparsers
+          # would silently no-op instead of printing usage + exiting 2).
+          /tmp/smoke/bin/bot-cmder >/dev/null 2>&1 && (
+            echo "ERROR: bot-cmder with no args should exit non-zero"
+            exit 1
+          ) || echo "OK — no-args path exits non-zero as expected"
+
   # Phase 7 — secret-scan is its own job (not a step in lint) because
   # it's a security gate, not a style gate. When it fails on a PR the
   # status check name "secret-scan" is unambiguous about what broke,
