@@ -11,10 +11,20 @@ from bot_cmder.config.settings import get_settings
 
 @pytest.fixture(autouse=True)
 def _isolated_env(tmp_path: Path, monkeypatch):
-    """Point Settings + AppConfig at a tmp dir so the CLI doesn't touch real state."""
+    """Point Settings + AppConfig at a tmp dir so the CLI doesn't
+    touch real state — including HOME / XDG_*_HOME so `state_dir()`
+    + `config_dir()` resolve inside tmp_path. Without HOME isolation
+    the lockout SQLite (issue #33) lands in the host's real
+    ~/.local/state/bot-cmder/ and stale schema from prior runs trips
+    ChecksumMismatch."""
     key = Fernet.generate_key().decode()
     monkeypatch.setenv("BOT_CMDER_MASTER_KEY", key)
     monkeypatch.setenv("APP_CONFIG_PATH", str(tmp_path / "missing.yaml"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("BOT_CMDER_STATE_DIR", raising=False)
+    monkeypatch.delenv("BOT_CMDER_CONFIG_DIR", raising=False)
     monkeypatch.chdir(tmp_path)  # var/ paths land here
     get_settings.cache_clear()
     yield

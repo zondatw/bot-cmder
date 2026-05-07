@@ -142,6 +142,47 @@ totp:
   # tracked separately if needed.)
   emergency_max_minutes: 60
 
+  # Issue #33 — OTP brute-force lockout. After `max_failures`
+  # OTP_INVALID events within `failure_window_minutes`, the user
+  # gets locked out for `lockout_minutes`. While locked, EVERY
+  # `/otp <code>` is rejected — even the correct one — so an
+  # attacker can't burn through with rapid guesses.
+  #
+  # Per-norm_id scoping: locking `slack:U0X...` does NOT lock
+  # `telegram:111`, even when both are aliases of the same `id:`
+  # in `users:`. Matches existing OTP enrollment scope, and means
+  # an SRE who got locked out on one platform can keep using the
+  # bot on another during an incident.
+  #
+  # Admin override: `bot-cmder unlock-totp --user telegram:111`
+  # clears the lockout + audit-logs OTP_LOCKOUT_ADMIN_RESET.
+  #
+  # State persists across bot restart (SQLite-backed at
+  # `<secret_store_path>/../totp_lockout.sqlite`).
+  lockout:
+    # Master switch. Default ON — security-by-default. Set to false
+    # for solo home labs / dogfood envs / specific SREs who want
+    # every OTP_INVALID visible in audit without lockout cutting
+    # attempts short.
+    enabled: true
+
+    # Failure count that triggers lockout. 5 leaves typo headroom
+    # without being lax (3M code-space at any moment, 5 attempts
+    # is generous for legitimate fat-finger).
+    max_failures: 5
+
+    # Lockout duration once triggered. Long enough that attacker
+    # ROI tanks (3M codes at 1-attempt-per-2-min ≈ 11 years);
+    # short enough that a legitimate SRE can wait through during
+    # an incident.
+    lockout_minutes: 10
+
+    # Sliding window over which failures are counted. A typo at
+    # 9am followed by 4 typos at 11am should NOT pile up — the
+    # 9am failure is outside the 15-min window from the 11am
+    # batch, so the count is 4, not 5, and no lockout fires.
+    failure_window_minutes: 15
+
 # ---------------------------------------------------------------------
 # Phase 2 — /kubectl builtin (PRIVILEGED)
 # ---------------------------------------------------------------------
