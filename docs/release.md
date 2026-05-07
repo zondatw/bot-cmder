@@ -25,29 +25,46 @@ afterwards if you want archeological landmarks.
 ```bash
 # 1. Bump the single source of truth on main
 $EDITOR bot_cmder/__init__.py    # bump __version__
+
+# 2. Roll over the changelog — rename `## [Unreleased]` to
+#    `## [0.X.Y] - YYYY-MM-DD` and add a fresh empty `## [Unreleased]`
+#    above it. Update the compare-link footer:
+#       [Unreleased]: ...compare/v0.X.Y...HEAD
+#       [0.X.Y]:      ...releases/tag/v0.X.Y
+#    Cross-check the entries against the closed PRs since v0.X.Y-1 —
+#    if `## [Unreleased]` is empty, it means PRs landed without
+#    recording user-visible behavior. Fill in before tagging.
+$EDITOR CHANGELOG.md
+
 git commit -am "release: 0.X.Y"
 git push                         # lands on main via PR
 
-# 2. Forward to beta — fires beta.yml → test.pypi.org
+# 3. Forward to beta — fires beta.yml → test.pypi.org
 git checkout beta
 git merge --ff-only main
 git push
 
-# 3. Verify on test.pypi.org. README rendering, license badge,
+# 4. Verify on test.pypi.org. README rendering, license badge,
 #    install command. In a fresh venv:
 pip install --index-url https://test.pypi.org/simple/ \
             --extra-index-url https://pypi.org/simple/ \
             bot-cmder
 bot-cmder --version
 
-# 4. If clean, forward to release — fires release.yml → pypi.org
+# 5. If clean, forward to release — fires release.yml → pypi.org
 git checkout release
 git merge --ff-only beta
 git push
 
-# 5. Approve the publish step in the `release` environment when
+# 6. Approve the publish step in the `release` environment when
 #    prompted (if required reviewers are configured), then verify:
 open https://pypi.org/project/bot-cmder/
+
+# 7. Optional: tag for archeology + paste the CHANGELOG entry as
+#    the GitHub release body.
+git tag -a v0.X.Y -m "v0.X.Y"
+git push --tags
+open https://github.com/zondatw/bot-cmder/releases/new?tag=v0.X.Y
 ```
 
 That's it for an established release. The first one needs one-time

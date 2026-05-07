@@ -38,6 +38,7 @@ bot-cmder = "bot_cmder.cli:main"
 Homepage = "https://github.com/zondatw/bot-cmder"
 Repository = "https://github.com/zondatw/bot-cmder"
 Issues = "https://github.com/zondatw/bot-cmder/issues"
+Changelog = "https://github.com/zondatw/bot-cmder/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [

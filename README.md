@@ -449,6 +449,10 @@ config/     pydantic-settings (env) + YAML
 
 The full plan and roadmap live in `docs/PLAN.md`.
 
+## Changelog
+
+Per-release notes — what's added, changed, deprecated, removed — in [CHANGELOG.md](CHANGELOG.md). Format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
