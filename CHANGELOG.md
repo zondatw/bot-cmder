@@ -29,6 +29,13 @@ section gets renamed to `## [0.X.Y] - YYYY-MM-DD` (see
   and needs immediate access. ([#34])
 - New audit events: `OTP_LOCKOUT_TRIGGERED`, `OTP_LOCKED_OUT`,
   `OTP_LOCKOUT_EXPIRED`, `OTP_LOCKOUT_ADMIN_RESET`. ([#34])
+- Per-level ANSI colorized log output in TTY mode (cyan / green /
+  yellow / red / bold-red for DEBUG / INFO / WARNING / ERROR /
+  CRITICAL) plus dim timestamp + dim logger name. Auto-detected via
+  `sys.stderr.isatty()`; honors `NO_COLOR` env (https://no-color.org/).
+  Makes ERROR / WARNING easier to spot among INFO noise during
+  dev iteration; non-TTY (logfile, pipe, container journal) gets
+  the plain formatter unchanged. ([#35])
 
 ### Changed
 
@@ -144,3 +151,4 @@ container image at `ghcr.io/zondatw/bot-cmder:0.2.0`.
 [#26]: https://github.com/zondatw/bot-cmder/pull/26
 [#33]: https://github.com/zondatw/bot-cmder/issues/33
 [#34]: https://github.com/zondatw/bot-cmder/pull/34
+[#35]: https://github.com/zondatw/bot-cmder/pull/35
