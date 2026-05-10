@@ -57,7 +57,7 @@ jobs:
           platforms: arm64
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # Login is only needed when we'll actually push (PRs build but
       # don't push). Skipping it on PRs means forks can run the build
