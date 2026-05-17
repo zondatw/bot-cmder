@@ -52,7 +52,7 @@ jobs:
       # `--platform linux/arm64` on the build step would fail with
       # "no matching manifest" on the runner's amd64 host.
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
