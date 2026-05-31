@@ -186,7 +186,7 @@ jobs:
         # Pinned action version + the same gitleaks binary version
         # we run locally (.pre-commit-config.yaml). Config is
         # auto-discovered from .gitleaks.toml at the repo root.
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           # Required by gitleaks-action@v2 for scanning pull
           # requests (announced as a breaking change in their
