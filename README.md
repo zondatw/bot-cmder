@@ -4,9 +4,6 @@
 
 Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram, Discord, and Slack when you're away from your laptop and prod has issues. Same dispatcher, same `/cmd` UX, same JSONL audit log on every platform; per-message TOTP gate on PRIVILEGED operations so a leaked chat session can't restart your services.
 
-> [!IMPORTANT]
-> **`pip install bot-cmder` is not live yet.** The PyPI package hasn't been published — a maintainer account-recovery is in progress (forgotten password, awaiting PyPI support). Until it clears, install [from source](#from-source-contributors) or via the [Docker image](#via-docker--ghcr). This notice will be removed once the first release lands on PyPI.
-
 ## Why bot-cmder
 
 - **Operate prod from your phone.** SSH-driven service actions, kubectl, custom runbooks — all reachable through chat. No laptop required during incidents.
@@ -14,8 +11,6 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram, D
 - **One codebase, three platforms.** Telegram + Discord + Slack adapters share the dispatcher / OTP gate / audit log. Pick one, all three, or none — every adapter mounts on demand.
 
 ## Quick start
-
-> Until `pip install bot-cmder` is live (see notice above), swap step 1 for a [source](#from-source-contributors) or [Docker](#via-docker--ghcr) install — the `init` / `enroll-totp` / `serve` steps are identical.
 
 ```shell
 pip install bot-cmder
@@ -32,9 +27,6 @@ Other install paths (source / Docker) below.
 ## Install
 
 ### From PyPI (recommended)
-
-> [!NOTE]
-> Not published yet — see the notice at the top. Use [from source](#from-source-contributors) or [Docker](#via-docker--ghcr) in the meantime.
 
 ```shell
 pip install bot-cmder
