@@ -46,10 +46,20 @@ git push
 
 # 4. Verify on test.pypi.org. README rendering, license badge,
 #    install command. In a fresh venv:
-pip install --index-url https://test.pypi.org/simple/ \
-            --extra-index-url https://pypi.org/simple/ \
-            bot-cmder
-bot-cmder --version
+#
+#    Naive `pip install --index-url https://test.pypi.org/simple/ bot-cmder`
+#    DOES NOT WORK — test.pypi has broken sdists of common deps
+#    (fastapi, uvicorn, etc.) that pip happily picks. Even with
+#    `--extra-index-url https://pypi.org/simple/` the resolver still
+#    sometimes prefers the test.pypi side. Workaround: download just
+#    bot-cmder's wheel from test.pypi, then `pip install` it locally
+#    so deps resolve from the default real-pypi index:
+python3 -m venv /tmp/bc-smoke
+/tmp/bc-smoke/bin/pip download --no-deps \
+    --index-url https://test.pypi.org/simple/ \
+    bot-cmder -d /tmp/bc-wheel
+/tmp/bc-smoke/bin/pip install /tmp/bc-wheel/bot_cmder-*.whl
+/tmp/bc-smoke/bin/bot-cmder --version    # should print: bot-cmder 0.X.Y
 
 # 5. If clean, forward to release — fires release.yml → pypi.org
 git checkout release
@@ -164,13 +174,20 @@ After publish, verify on https://test.pypi.org/project/bot-cmder/:
 - License shows `MIT`
 - "Project links" sidebar lists Homepage / Repository / Issues
   (sourced from `[project.urls]` in pyproject.toml)
-- Installable in a fresh venv:
+- Installable in a fresh venv. Naive `pip install --index-url
+  https://test.pypi.org/simple/` does **not** work — test.pypi
+  hosts broken sdists of common deps (fastapi, uvicorn, etc.)
+  that pip picks even with `--extra-index-url` pointing at real
+  pypi. Workaround is a two-step: download only bot-cmder's
+  wheel from test.pypi, then install the wheel locally so deps
+  resolve from real pypi:
 
   ```bash
   python3 -m venv /tmp/smoke
-  /tmp/smoke/bin/pip install --index-url https://test.pypi.org/simple/ \
-                              --extra-index-url https://pypi.org/simple/ \
-                              bot-cmder
+  /tmp/smoke/bin/pip download --no-deps \
+      --index-url https://test.pypi.org/simple/ \
+      bot-cmder -d /tmp/smoke-wheel
+  /tmp/smoke/bin/pip install /tmp/smoke-wheel/bot_cmder-*.whl
   /tmp/smoke/bin/bot-cmder --version  # should print bot-cmder 0.2.0
   /tmp/smoke/bin/bot-cmder init --config-dir /tmp/smoke-cfg
   ```
@@ -215,6 +232,7 @@ After test.pypi.org is green:
 | Workflow succeeds but PyPI page shows the previous version | `__version__` not bumped before pushing to beta/release | Bump on main, fast-forward beta + release. PyPI will reject a re-upload of the same version literal so this manifests as a 400 error rather than a silent "wrong version" — the `release` page just stays at the prior good version. |
 | Push to beta/release rejected with "non-fast-forward" | beta/release diverged from main (someone hot-fixed directly on the branch) | Reconcile manually. Easiest: `git checkout main`, `git merge beta` to pull the divergent commits home, resolve conflicts, then forward main → beta → release as normal. |
 | Test PyPI publish 400s with "File already exists" | PyPI rejects re-uploading the same version literal | Bump `__version__` on main (e.g. add `a1` suffix), forward to beta. Each push must publish a distinct version. |
+| Smoke `pip install --index-url https://test.pypi.org/simple/ bot-cmder` fails with weird build errors on `fastapi` / `uvicorn` / etc. ("`FileNotFoundError: 'DESCRIPTION.txt'`", etc.) | test.pypi hosts broken sdists of common deps uploaded by other people; `--index-url` makes pip resolve them from test.pypi too, even with `--extra-index-url https://pypi.org/simple/` falling back | Two-step install: `pip download --no-deps --index-url https://test.pypi.org/simple/ bot-cmder` then `pip install <wheel>` — deps resolve from real pypi (the default index for the second command). Real-pypi install of the released version doesn't hit this. |
 | Push to beta/release didn't fire the workflow | Direct push to a protected branch was blocked, OR the workflow file isn't on that branch yet | First push of a new workflow file: it fires from the branch it lives on. If `beta.yml` is on `main` only and you push to `beta`, the workflow doesn't exist on `beta` yet. Easiest fix: cherry-pick or fast-forward the workflow files onto each release branch first. |
 
 ---
