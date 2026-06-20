@@ -249,6 +249,134 @@ def _make_regex_validator(pattern: str, hint: str) -> Callable[[str], bool | str
     return _check
 
 
+# --- live API validation (issue #45 C7) --------------------------------
+#
+# Per-platform "is this token actually valid?" check using the
+# platform's own auth endpoint. Opt-in via an in-flow questionary
+# prompt at the end of each platform flow — default `No` so an
+# offline run / fake-token testing path stays prompt-free.
+#
+# Each `_validate_<platform>` returns (ok, message): ok=True on
+# success, False with a human-readable message on failure. Network
+# errors and HTTP non-200 are both treated as failure.
+
+# Match `bot_cmder.connectors.ssh` / the rest of the codebase —
+# import httpx at top so the validator functions can be sync,
+# called from the wizard's sync flow.
+
+_VALIDATION_TIMEOUT_S = 5.0
+
+
+def _validate_telegram(env: EnvFile) -> tuple[bool, str]:
+    """`GET https://api.telegram.org/bot<TOKEN>/getMe` → expect
+    `ok: true`. Telegram returns `ok: false, description: ...` on
+    bad tokens; surface that as the failure message."""
+    import httpx
+
+    token = env.get("TELEGRAM_TOKEN")
+    if not token:
+        return False, "TELEGRAM_TOKEN not set — fill in the credentials first."
+    try:
+        r = httpx.get(
+            f"https://api.telegram.org/bot{token}/getMe",
+            timeout=_VALIDATION_TIMEOUT_S,
+        )
+    except httpx.HTTPError as e:
+        return False, f"Network error: {e}"
+    try:
+        body = r.json()
+    except Exception:
+        return False, f"HTTP {r.status_code} with non-JSON body"
+    if body.get("ok") is True:
+        bot_name = body.get("result", {}).get("username", "<unknown>")
+        return True, f"OK — bot is @{bot_name}"
+    return False, f"Telegram says: {body.get('description', '<no description>')}"
+
+
+def _validate_discord(env: EnvFile) -> tuple[bool, str]:
+    """`GET https://discord.com/api/v10/users/@me` with `Authorization:
+    Bot <TOKEN>`. Expect 200 + `bot: true`."""
+    import httpx
+
+    token = env.get("DISCORD_BOT_TOKEN")
+    if not token:
+        return False, "DISCORD_BOT_TOKEN not set — fill in the credentials first."
+    try:
+        r = httpx.get(
+            "https://discord.com/api/v10/users/@me",
+            headers={"Authorization": f"Bot {token}"},
+            timeout=_VALIDATION_TIMEOUT_S,
+        )
+    except httpx.HTTPError as e:
+        return False, f"Network error: {e}"
+    if r.status_code != 200:
+        return False, f"HTTP {r.status_code}: {r.text[:200]}"
+    body = r.json()
+    if body.get("bot") is True:
+        return True, f"OK — bot user {body.get('username', '<unknown>')}"
+    return False, "Discord returned a non-bot user — token may belong to a user account"
+
+
+def _validate_slack(env: EnvFile) -> tuple[bool, str]:
+    """`POST https://slack.com/api/auth.test` with `Authorization:
+    Bearer <BOT_TOKEN>`. Expect 200 + `ok: true`."""
+    import httpx
+
+    token = env.get("SLACK_BOT_TOKEN")
+    if not token:
+        return False, "SLACK_BOT_TOKEN not set — fill in the credentials first."
+    try:
+        r = httpx.post(
+            "https://slack.com/api/auth.test",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=_VALIDATION_TIMEOUT_S,
+        )
+    except httpx.HTTPError as e:
+        return False, f"Network error: {e}"
+    if r.status_code != 200:
+        return False, f"HTTP {r.status_code}"
+    body = r.json()
+    if body.get("ok") is True:
+        return True, f"OK — workspace {body.get('team', '<unknown>')} / user {body.get('user', '<unknown>')}"
+    return False, f"Slack says: {body.get('error', '<no error>')}"
+
+
+def _ask_validate(platform: str, validator: Callable[[EnvFile], tuple[bool, str]], env: EnvFile) -> str:
+    """Ask `Validate against <platform> API?`, run validator if yes,
+    and on failure offer Retry / Save anyway / Abort.
+
+    Returns:
+      'ok'     — validation succeeded OR operator opted not to validate
+      'save'   — validation failed, operator chose to save anyway
+      'abort'  — operator chose to abort (changes will be discarded)
+    """
+    import questionary
+
+    if not questionary.confirm(
+        f"Validate {platform} credentials against the API now?",
+        default=False,
+    ).unsafe_ask():
+        return "ok"
+
+    while True:
+        ok, msg = validator(env)
+        if ok:
+            print(f"  ✓ {msg}")
+            return "ok"
+        print(f"  ✗ {msg}")
+        choice = questionary.select(
+            "Validation failed. What now?",
+            choices=[
+                questionary.Choice("Retry (e.g. fixed token in another window)", value="retry"),
+                questionary.Choice("Save anyway (I know what I'm doing)", value="save"),
+                questionary.Choice("Abort (discard changes)", value="abort"),
+            ],
+        ).unsafe_ask()
+        if choice == "retry":
+            continue
+        return choice  # 'save' or 'abort'
+
+
 # --- platform flows ----------------------------------------------------
 
 
@@ -314,6 +442,11 @@ def _flow_telegram(env: EnvFile, args: argparse.Namespace) -> bool:
         generator=lambda: secrets.token_urlsafe(32),
     ):
         changed = True
+
+    # 4. Live validation (opt-in). Aborts discard all changes; save
+    # propagates True so cmd_configure writes despite the failure.
+    if changed and _ask_validate("Telegram", _validate_telegram, env) == "abort":
+        return False
 
     return changed
 
@@ -406,6 +539,10 @@ def _flow_discord(env: EnvFile, args: argparse.Namespace) -> bool:
         ),
     ):
         changed = True
+
+    # Live validation (opt-in)
+    if changed and _ask_validate("Discord", _validate_discord, env) == "abort":
+        return False
 
     return changed
 
@@ -518,6 +655,10 @@ def _flow_slack(env: EnvFile, args: argparse.Namespace) -> bool:
             ),
         ):
             changed = True
+
+    # Live validation (opt-in)
+    if changed and _ask_validate("Slack", _validate_slack, env) == "abort":
+        return False
 
     return changed
 

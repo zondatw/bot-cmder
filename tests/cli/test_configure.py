@@ -21,7 +21,9 @@ import types
 from collections import deque
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 
 from bot_cmder.cli import main
 
@@ -218,6 +220,7 @@ def test_telegram_webhook_flow_writes_token_and_generated_secret(tmp_path, fake_
             "webhook",  # mode select
             "123456789:fake-but-correct-format-token-XXXXXXX",  # bot token prompt
             True,  # confirm auto-generate webhook secret? Yes
+            False,  # in-flow validate against API? No (skip — C7 default)
         ]
     )
 
@@ -243,15 +246,16 @@ def test_telegram_polling_flow_skips_webhook_secret(tmp_path, fake_questionary, 
         [
             "polling",
             "987654321:another-fake-format-token-YYYYYYYY",
+            False,  # in-flow validate? No
         ]
     )
 
     rc = main(["configure", "telegram", "--config-dir", str(cfg)])
     assert rc == 0
 
-    # Only TWO questionary calls fired (mode select + bot token).
-    # If webhook-secret prompt had fired, we'd see a confirm() too.
-    assert len(fake.calls) == 2
+    # 3 calls: mode select + bot token + validate-confirm.
+    # If webhook-secret prompt had fired, we'd see a 4th confirm() too.
+    assert len(fake.calls) == 3
     assert fake.calls[0][0] == "select"  # mode
     assert fake.calls[1][0] == "password"  # bot token
 
@@ -275,7 +279,7 @@ def test_telegram_flow_preserves_other_platforms_values(tmp_path, fake_questiona
         encoding="utf-8",
     )
 
-    fake_questionary(["polling", "111:fake-fake-fake-fake-fake-fake-fake-xx"])
+    fake_questionary(["polling", "111:fake-fake-fake-fake-fake-fake-fake-xx", False])
 
     rc = main(["configure", "telegram", "--config-dir", str(cfg)])
     assert rc == 0
@@ -322,7 +326,7 @@ def test_telegram_dry_run_writes_nothing_but_shows_diff(tmp_path, fake_questiona
     env_path = _seed_env(cfg)
     before = env_path.read_text(encoding="utf-8")
 
-    fake_questionary(["polling", "111:dry-run-token-which-is-long-enough-now"])
+    fake_questionary(["polling", "111:dry-run-token-which-is-long-enough-now", False])
 
     rc = main(["configure", "telegram", "--config-dir", str(cfg), "--dry-run"])
     assert rc == 0
@@ -352,6 +356,7 @@ def test_discord_interactions_flow_writes_all_four_keys(tmp_path, fake_questiona
             "123456789012345678",  # 18-digit app ID
             "a" * 64,  # 64-char hex public key
             "",  # guild ID (blank = skipped)
+            False,  # validate? No
         ]
     )
 
@@ -379,15 +384,16 @@ def test_discord_gateway_flow_skips_public_key(tmp_path, fake_questionary):
             "fake-gateway-token-opaque",  # bot token
             "999888777666555444",  # app ID
             "",  # guild ID skipped
+            False,  # validate? No
         ]
     )
 
     rc = main(["configure", "discord", "--config-dir", str(cfg)])
     assert rc == 0
 
-    # 4 calls — mode select, bot_token password, app_id text, guild_id text.
-    # NO public_key prompt fired.
-    assert len(fake.calls) == 4
+    # 5 calls — mode select, bot_token password, app_id text, guild_id text,
+    # validate confirm. NO public_key prompt fired.
+    assert len(fake.calls) == 5
 
     written = env_path.read_text(encoding="utf-8")
     assert "DISCORD_MODE=gateway" in written
@@ -406,6 +412,7 @@ def test_discord_with_guild_id_writes_it(tmp_path, fake_questionary):
             "fake-token",
             "111111111111111111",  # app ID
             "222222222222222222",  # guild ID — passes regex
+            False,  # validate? No
         ]
     )
 
@@ -429,6 +436,7 @@ def test_slack_events_flow_writes_bot_token_signing_secret_url(tmp_path, fake_qu
             "xoxb-fake-bot-token-for-testing",  # bot token (xoxb- prefix)
             "0123456789abcdef0123456789abcdef",  # 32-hex signing secret
             "my-tunnel.ngrok-free.dev",  # request URL
+            False,  # validate? No
         ]
     )
 
@@ -456,14 +464,15 @@ def test_slack_socket_flow_writes_app_token_skips_request_url(tmp_path, fake_que
             "xoxb-fake-socket-bot-token",
             "xapp-1-FAKE-APP-TOKEN-VALUE",  # xapp- prefix
             "",  # skip signing secret
+            False,  # validate? No
         ]
     )
 
     rc = main(["configure", "slack", "--config-dir", str(cfg)])
     assert rc == 0
 
-    # Mode + bot_token + app_token + signing_secret (blank=skip) = 4 calls
-    assert len(fake.calls) == 4
+    # Mode + bot_token + app_token + signing_secret + validate = 5 calls
+    assert len(fake.calls) == 5
 
     written = env_path.read_text(encoding="utf-8")
     assert "SLACK_MODE=socket" in written
@@ -479,7 +488,7 @@ def test_slack_socket_signing_secret_optional_skip(tmp_path, fake_questionary):
     cfg = tmp_path / "cfg"
     env_path = _seed_env(cfg)
 
-    fake_questionary(["socket", "xoxb-x", "xapp-y", ""])
+    fake_questionary(["socket", "xoxb-x", "xapp-y", "", False])
 
     rc = main(["configure", "slack", "--config-dir", str(cfg)])
     assert rc == 0
@@ -487,3 +496,132 @@ def test_slack_socket_signing_secret_optional_skip(tmp_path, fake_questionary):
     written = env_path.read_text(encoding="utf-8")
     # Signing secret line either absent or empty — validator allows blank
     assert "SLACK_SIGNING_SECRET=0123" not in written
+
+
+# --- C7: In-flow live validation --------------------------------------
+#
+# Tests use respx to mock httpx — exact same pattern as
+# tests/adapters/discord/test_client.py. Validator-fail-then-save-
+# anyway tests the [r]etry / [s]ave-anyway / [a]bort menu's "save"
+# branch; validator-fail-abort tests the "abort" branch (changes
+# discarded, file untouched).
+
+
+@respx.mock
+def test_telegram_validate_success_writes(tmp_path, fake_questionary):
+    """Operator opts in to validation, Telegram getMe returns ok=True
+    → writes proceed normally."""
+    cfg = tmp_path / "cfg"
+    env_path = _seed_env(cfg)
+
+    fake_questionary(
+        [
+            "polling",
+            "111:fake-token-which-is-long-enough-to-pass",
+            True,  # validate? Yes
+        ]
+    )
+    respx.get("https://api.telegram.org/bot111:fake-token-which-is-long-enough-to-pass/getMe").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"username": "fakebot"}})
+    )
+
+    rc = main(["configure", "telegram", "--config-dir", str(cfg)])
+    assert rc == 0
+    assert "TELEGRAM_TOKEN=111:fake-token-which-is-long-enough-to-pass" in env_path.read_text(encoding="utf-8")
+
+
+@respx.mock
+def test_telegram_validate_fail_abort_discards_changes(tmp_path, fake_questionary):
+    """Validation fails; operator picks Abort → file is NOT written."""
+    cfg = tmp_path / "cfg"
+    env_path = _seed_env(cfg)
+    before = env_path.read_text(encoding="utf-8")
+
+    fake_questionary(
+        [
+            "polling",
+            "111:bad-token-format-but-passes-regex-yyy",
+            True,  # validate? Yes
+            "abort",  # validation-failed menu choice
+        ]
+    )
+    respx.get("https://api.telegram.org/bot111:bad-token-format-but-passes-regex-yyy/getMe").mock(
+        return_value=httpx.Response(401, json={"ok": False, "description": "Unauthorized"})
+    )
+
+    rc = main(["configure", "telegram", "--config-dir", str(cfg)])
+    assert rc == 0
+    # File untouched — abort caused flow to return False, dispatcher
+    # saw "no changes to write"
+    assert env_path.read_text(encoding="utf-8") == before
+
+
+@respx.mock
+def test_telegram_validate_fail_save_anyway_writes(tmp_path, fake_questionary):
+    """Validation fails; operator picks Save anyway → write proceeds."""
+    cfg = tmp_path / "cfg"
+    env_path = _seed_env(cfg)
+
+    fake_questionary(
+        [
+            "polling",
+            "111:operator-knows-this-token-is-fine-anyway",
+            True,  # validate? Yes
+            "save",  # validation-failed menu choice
+        ]
+    )
+    respx.get("https://api.telegram.org/bot111:operator-knows-this-token-is-fine-anyway/getMe").mock(
+        return_value=httpx.Response(401, json={"ok": False, "description": "Unauthorized"})
+    )
+
+    rc = main(["configure", "telegram", "--config-dir", str(cfg)])
+    assert rc == 0
+    assert "TELEGRAM_TOKEN=111:operator-knows-this-token-is-fine-anyway" in env_path.read_text(encoding="utf-8")
+
+
+@respx.mock
+def test_discord_validate_success(tmp_path, fake_questionary):
+    """Discord users/@me returns bot=True → validate passes."""
+    cfg = tmp_path / "cfg"
+    env_path = _seed_env(cfg)
+
+    fake_questionary(
+        [
+            "gateway",
+            "fake-discord-bot-token",
+            "111111111111111111",
+            "",  # skip guild_id
+            True,  # validate? Yes
+        ]
+    )
+    respx.get("https://discord.com/api/v10/users/@me").mock(
+        return_value=httpx.Response(200, json={"bot": True, "username": "fakebot#0001"})
+    )
+
+    rc = main(["configure", "discord", "--config-dir", str(cfg)])
+    assert rc == 0
+    assert "DISCORD_BOT_TOKEN=fake-discord-bot-token" in env_path.read_text(encoding="utf-8")
+
+
+@respx.mock
+def test_slack_validate_success(tmp_path, fake_questionary):
+    """Slack auth.test returns ok=True → validate passes."""
+    cfg = tmp_path / "cfg"
+    env_path = _seed_env(cfg)
+
+    fake_questionary(
+        [
+            "socket",
+            "xoxb-fake-bot",
+            "xapp-1-FAKE-APP-TOKEN",
+            "",  # skip signing_secret
+            True,  # validate? Yes
+        ]
+    )
+    respx.post("https://slack.com/api/auth.test").mock(
+        return_value=httpx.Response(200, json={"ok": True, "team": "fake-team", "user": "fakebot"})
+    )
+
+    rc = main(["configure", "slack", "--config-dir", str(cfg)])
+    assert rc == 0
+    assert "SLACK_BOT_TOKEN=xoxb-fake-bot" in env_path.read_text(encoding="utf-8")
