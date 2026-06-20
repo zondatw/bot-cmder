@@ -412,9 +412,114 @@ def _flow_discord(env: EnvFile, args: argparse.Namespace) -> bool:
 
 def _flow_slack(env: EnvFile, args: argparse.Namespace) -> bool:
     """Walk Slack credential setup. Returns True if env was modified.
-    Placeholder — real walkthrough lands in C6 of issue #45."""
-    print("  Slack flow not yet wired (lands in C6 of issue #45)", file=sys.stderr)
-    return False
+
+    Asks (in order): ingestion mode, bot token, mode-specific
+    credentials. Events mode needs signing_secret + optional
+    request_url; socket mode needs app_token + optional
+    signing_secret (Slack still surfaces signing for legacy events).
+    """
+    import questionary
+
+    print("\n=== Slack ===")
+    print(
+        "  Setup docs: docs/slack-setup.md (events) +\n"
+        "              docs/slack-socket-mode.md (socket, no-domain mode)"
+    )
+
+    changed = False
+
+    # 1. Ingestion mode
+    current_mode = env.get("SLACK_MODE") or "events"
+    mode = questionary.select(
+        "Ingestion mode",
+        choices=[
+            questionary.Choice(
+                title="events  — Slack POSTs slash commands to your URL (needs HTTPS + signing_secret)",
+                value="events",
+            ),
+            questionary.Choice(
+                title="socket  — Bot opens WSS via app_token (no URL — home labs / corp egress)",
+                value="socket",
+            ),
+        ],
+        default=current_mode,
+    ).unsafe_ask()
+    if mode != env.get("SLACK_MODE"):
+        env.set("SLACK_MODE", mode)
+        changed = True
+
+    # 2. Bot token (required for both modes)
+    if _apply_field(
+        env,
+        "SLACK_BOT_TOKEN",
+        prompt="Bot token (OAuth & Permissions → Bot User OAuth Token, starts with `xoxb-`)",
+        secret=True,
+        validator=_make_regex_validator(
+            r"^xoxb-.+",
+            "Expected to start with `xoxb-` (Slack bot user OAuth token)",
+        ),
+    ):
+        changed = True
+
+    # 3. Mode-specific fields
+    if mode == "events":
+        # Signing secret is mandatory for events mode (HMAC verifies
+        # every inbound request)
+        if _apply_field(
+            env,
+            "SLACK_SIGNING_SECRET",
+            prompt="Signing secret (Basic Information → App Credentials, 32 hex chars)",
+            secret=True,
+            validator=_make_regex_validator(
+                r"^[0-9a-fA-F]{32}$",
+                "Expected 32 hex characters (Slack signing secret format)",
+            ),
+        ):
+            changed = True
+        # Optional: explicit request URL (otherwise slack-manifest
+        # falls back to NGROK_DOMAIN). Read only by `bot-cmder
+        # slack-manifest`, not by the running bot.
+        print(
+            "  SLACK_REQUEST_URL is read ONLY by `bot-cmder slack-manifest`,\n"
+            "  not by the running bot. Leave blank to fall back to NGROK_DOMAIN."
+        )
+        if _apply_field(
+            env,
+            "SLACK_REQUEST_URL",
+            prompt="Public HTTPS URL for slash commands (optional, bare host OK)",
+            secret=False,
+        ):
+            changed = True
+    else:  # socket
+        # App token is mandatory for socket mode (opens the WSS conn)
+        if _apply_field(
+            env,
+            "SLACK_APP_TOKEN",
+            prompt="App-level token (Basic Information → App-Level Tokens, starts with `xapp-`)",
+            secret=True,
+            validator=_make_regex_validator(
+                r"^xapp-.+",
+                "Expected to start with `xapp-` (Slack app-level token)",
+            ),
+        ):
+            changed = True
+        # Signing secret is optional in socket mode (Slack still
+        # surfaces it for legacy events APIs but bot doesn't use it
+        # in pure socket mode)
+        print("  SLACK_SIGNING_SECRET is optional in socket mode — leave blank to skip.")
+        if _apply_field(
+            env,
+            "SLACK_SIGNING_SECRET",
+            prompt="Signing secret (optional in socket mode, 32 hex chars)",
+            secret=True,
+            validator=_make_regex_validator(
+                r"^[0-9a-fA-F]{32}$",
+                "Expected 32 hex characters (or leave blank)",
+            ),
+        ):
+            changed = True
+
+    return changed
 
 
 _FLOWS = {

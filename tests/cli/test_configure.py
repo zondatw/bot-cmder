@@ -413,3 +413,77 @@ def test_discord_with_guild_id_writes_it(tmp_path, fake_questionary):
     assert rc == 0
 
     assert "DISCORD_GUILD_ID=222222222222222222" in env_path.read_text(encoding="utf-8")
+
+
+# --- C6: Slack flow ---------------------------------------------------
+
+
+def test_slack_events_flow_writes_bot_token_signing_secret_url(tmp_path, fake_questionary):
+    """Events mode requires bot_token + signing_secret. URL is optional."""
+    cfg = tmp_path / "cfg"
+    env_path = _seed_env(cfg)
+
+    fake_questionary(
+        [
+            "events",  # mode
+            "xoxb-fake-bot-token-for-testing",  # bot token (xoxb- prefix)
+            "0123456789abcdef0123456789abcdef",  # 32-hex signing secret
+            "my-tunnel.ngrok-free.dev",  # request URL
+        ]
+    )
+
+    rc = main(["configure", "slack", "--config-dir", str(cfg)])
+    assert rc == 0
+
+    written = env_path.read_text(encoding="utf-8")
+    assert "SLACK_MODE=events" in written
+    assert "SLACK_BOT_TOKEN=xoxb-fake-bot-token-for-testing" in written
+    assert "SLACK_SIGNING_SECRET=0123456789abcdef0123456789abcdef" in written
+    assert "SLACK_REQUEST_URL=my-tunnel.ngrok-free.dev" in written
+    # NOT a socket-mode field
+    assert "SLACK_APP_TOKEN" not in written
+
+
+def test_slack_socket_flow_writes_app_token_skips_request_url(tmp_path, fake_questionary):
+    """Socket mode needs app_token instead of request_url. Signing
+    secret is optional — operator may skip with blank."""
+    cfg = tmp_path / "cfg"
+    env_path = _seed_env(cfg)
+
+    fake = fake_questionary(
+        [
+            "socket",
+            "xoxb-fake-socket-bot-token",
+            "xapp-1-FAKE-APP-TOKEN-VALUE",  # xapp- prefix
+            "",  # skip signing secret
+        ]
+    )
+
+    rc = main(["configure", "slack", "--config-dir", str(cfg)])
+    assert rc == 0
+
+    # Mode + bot_token + app_token + signing_secret (blank=skip) = 4 calls
+    assert len(fake.calls) == 4
+
+    written = env_path.read_text(encoding="utf-8")
+    assert "SLACK_MODE=socket" in written
+    assert "SLACK_APP_TOKEN=xapp-1-FAKE-APP-TOKEN-VALUE" in written
+    # Socket mode doesn't ask for request URL
+    assert "SLACK_REQUEST_URL" not in written
+
+
+def test_slack_socket_signing_secret_optional_skip(tmp_path, fake_questionary):
+    """Empty input for the optional signing_secret in socket mode
+    should leave the key unset (or empty), NOT trigger validator
+    failure."""
+    cfg = tmp_path / "cfg"
+    env_path = _seed_env(cfg)
+
+    fake_questionary(["socket", "xoxb-x", "xapp-y", ""])
+
+    rc = main(["configure", "slack", "--config-dir", str(cfg)])
+    assert rc == 0
+
+    written = env_path.read_text(encoding="utf-8")
+    # Signing secret line either absent or empty — validator allows blank
+    assert "SLACK_SIGNING_SECRET=0123" not in written
