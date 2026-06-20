@@ -320,9 +320,94 @@ def _flow_telegram(env: EnvFile, args: argparse.Namespace) -> bool:
 
 def _flow_discord(env: EnvFile, args: argparse.Namespace) -> bool:
     """Walk Discord credential setup. Returns True if env was modified.
-    Placeholder — real walkthrough lands in C5 of issue #45."""
-    print("  Discord flow not yet wired (lands in C5 of issue #45)", file=sys.stderr)
-    return False
+
+    Asks (in order): ingestion mode, bot token, application ID,
+    public key (interactions mode only — gateway doesn't sign-check),
+    optional guild ID (read only by `bot-cmder discord-register`).
+    """
+    import questionary
+
+    print("\n=== Discord ===")
+    print(
+        "  Setup docs: docs/discord-setup.md (interactions) +\n"
+        "              docs/discord-gateway.md (gateway, no-domain mode)"
+    )
+
+    changed = False
+
+    # 1. Ingestion mode
+    current_mode = env.get("DISCORD_MODE") or "interactions"
+    mode = questionary.select(
+        "Ingestion mode",
+        choices=[
+            questionary.Choice(
+                title="interactions  — Discord POSTs slash commands to your URL (needs HTTPS + public_key)",
+                value="interactions",
+            ),
+            questionary.Choice(
+                title="gateway       — Bot opens WSS (no URL, but loses slash commands)",
+                value="gateway",
+            ),
+        ],
+        default=current_mode,
+    ).unsafe_ask()
+    if mode != env.get("DISCORD_MODE"):
+        env.set("DISCORD_MODE", mode)
+        changed = True
+
+    # 2. Bot token (required for both modes)
+    if _apply_field(
+        env,
+        "DISCORD_BOT_TOKEN",
+        prompt="Bot token (Discord dev portal → Bot → Reset Token)",
+        secret=True,
+    ):
+        changed = True
+
+    # 3. Application ID (required for both modes)
+    if _apply_field(
+        env,
+        "DISCORD_APPLICATION_ID",
+        prompt="Application ID (numeric, from app URL or General Information page)",
+        secret=False,
+        validator=_make_regex_validator(
+            r"^\d{17,20}$",
+            "Expected a 17-20 digit numeric snowflake ID",
+        ),
+    ):
+        changed = True
+
+    # 4. Public key — interactions mode only (gateway doesn't sign-check)
+    if mode == "interactions" and _apply_field(
+        env,
+        "DISCORD_PUBLIC_KEY",
+        prompt="Public key (64-char hex, from General Information page)",
+        secret=False,
+        validator=_make_regex_validator(
+            r"^[0-9a-fA-F]{64}$",
+            "Expected 64 hex characters (Discord public key format)",
+        ),
+    ):
+        changed = True
+
+    # 5. Guild ID — optional, only read by `bot-cmder discord-register`
+    print(
+        "  DISCORD_GUILD_ID is read ONLY by `bot-cmder discord-register`,\n"
+        "  not by the running bot. Useful for dev-time slash command pushes."
+    )
+    if _apply_field(
+        env,
+        "DISCORD_GUILD_ID",
+        prompt="Guild ID for dev slash command registration (optional, snowflake or blank)",
+        secret=False,
+        validator=_make_regex_validator(
+            r"^\d{17,20}$",
+            "Expected a 17-20 digit numeric snowflake ID (or leave blank to skip)",
+        ),
+    ):
+        changed = True
+
+    return changed
 
 
 def _flow_slack(env: EnvFile, args: argparse.Namespace) -> bool:

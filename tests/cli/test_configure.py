@@ -333,3 +333,83 @@ def test_telegram_dry_run_writes_nothing_but_shows_diff(tmp_path, fake_questiona
     out = capsys.readouterr().out
     # Diff output contains the proposed line
     assert "TELEGRAM_TOKEN=111:dry-run-token-which-is-long-enough-now" in out
+
+
+# --- C5: Discord flow -------------------------------------------------
+
+
+def test_discord_interactions_flow_writes_all_four_keys(tmp_path, fake_questionary):
+    """Walk interactions mode: mode → token → app_id → public_key →
+    skip guild_id. Expect MODE + BOT_TOKEN + APPLICATION_ID +
+    PUBLIC_KEY in the .env."""
+    cfg = tmp_path / "cfg"
+    env_path = _seed_env(cfg)
+
+    fake_questionary(
+        [
+            "interactions",  # mode
+            "fake-bot-token-opaque-discord-string",  # bot token
+            "123456789012345678",  # 18-digit app ID
+            "a" * 64,  # 64-char hex public key
+            "",  # guild ID (blank = skipped)
+        ]
+    )
+
+    rc = main(["configure", "discord", "--config-dir", str(cfg)])
+    assert rc == 0
+
+    written = env_path.read_text(encoding="utf-8")
+    assert "DISCORD_MODE=interactions" in written
+    assert "DISCORD_BOT_TOKEN=fake-bot-token-opaque-discord-string" in written
+    assert "DISCORD_APPLICATION_ID=123456789012345678" in written
+    assert f"DISCORD_PUBLIC_KEY={'a' * 64}" in written
+    # Guild ID was skipped (blank), no DISCORD_GUILD_ID line written
+    assert "DISCORD_GUILD_ID" not in written
+
+
+def test_discord_gateway_flow_skips_public_key(tmp_path, fake_questionary):
+    """Gateway mode doesn't sign-check — public key prompt should NOT
+    fire. Verify by checking call count vs interactions mode."""
+    cfg = tmp_path / "cfg"
+    env_path = _seed_env(cfg)
+
+    fake = fake_questionary(
+        [
+            "gateway",  # mode
+            "fake-gateway-token-opaque",  # bot token
+            "999888777666555444",  # app ID
+            "",  # guild ID skipped
+        ]
+    )
+
+    rc = main(["configure", "discord", "--config-dir", str(cfg)])
+    assert rc == 0
+
+    # 4 calls — mode select, bot_token password, app_id text, guild_id text.
+    # NO public_key prompt fired.
+    assert len(fake.calls) == 4
+
+    written = env_path.read_text(encoding="utf-8")
+    assert "DISCORD_MODE=gateway" in written
+    assert "DISCORD_PUBLIC_KEY" not in written
+
+
+def test_discord_with_guild_id_writes_it(tmp_path, fake_questionary):
+    """Operator who fills in the guild ID gets it written. Validator
+    enforces the snowflake format."""
+    cfg = tmp_path / "cfg"
+    env_path = _seed_env(cfg)
+
+    fake_questionary(
+        [
+            "gateway",
+            "fake-token",
+            "111111111111111111",  # app ID
+            "222222222222222222",  # guild ID — passes regex
+        ]
+    )
+
+    rc = main(["configure", "discord", "--config-dir", str(cfg)])
+    assert rc == 0
+
+    assert "DISCORD_GUILD_ID=222222222222222222" in env_path.read_text(encoding="utf-8")
