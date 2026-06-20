@@ -14,6 +14,18 @@ section gets renamed to `## [0.X.Y] - YYYY-MM-DD` (see
 
 ### Added
 
+- `bot-cmder configure` — interactive credential wizard for
+  Telegram / Discord / Slack. Walks one or all platforms via
+  arrow-key `questionary` menus, asks for each value in the right
+  order with format hints, optionally pings the platform's API to
+  verify the credential actually works before writing. Update is
+  surgical: existing `BOT_CMDER_MASTER_KEY` + other platforms'
+  values + comments survive byte-for-byte. Idempotent — re-run
+  to add a platform, flip a mode, or rotate a token. Supports
+  `configure {telegram,discord,slack,all}` for direct mode,
+  `--dry-run` to preview the diff, `--non-interactive` for CI
+  smoke tests. `bot-cmder init` now mentions it in "Next steps".
+  ([#45])
 - OTP brute-force lockout. After `max_failures` `OTP_INVALID` events
   within `failure_window_minutes`, the user gets locked out for
   `lockout_minutes`; while locked, every `/otp <code>` is rejected
@@ -152,3 +164,4 @@ container image at `ghcr.io/zondatw/bot-cmder:0.2.0`.
 [#33]: https://github.com/zondatw/bot-cmder/issues/33
 [#34]: https://github.com/zondatw/bot-cmder/pull/34
 [#35]: https://github.com/zondatw/bot-cmder/pull/35
+[#45]: https://github.com/zondatw/bot-cmder/issues/45

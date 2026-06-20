@@ -14,6 +14,11 @@ through the long-poll connection.
 > delivers each update once to whoever's polling first). Webhook
 > mode behind a load balancer is the right answer for HA.
 
+> **Prefer an interactive walkthrough?** `bot-cmder configure telegram`
+> asks for the mode (webhook/polling) and the token, validates the
+> format, and optionally pings `getMe` to confirm — see
+> [`docs/configure.md`](configure.md).
+
 ---
 
 ## How to switch

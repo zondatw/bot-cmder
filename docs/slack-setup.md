@@ -9,6 +9,11 @@ points at exactly where.
 > bot already runs locally with `just dev`, and a public HTTPS URL
 > reachable by Slack (`just tunnel-ngrok` is fine for dev).
 
+> **Prefer an interactive walkthrough?** Once you have the values from
+> Slack's app management UI (steps 1–3 below), `bot-cmder configure
+> slack` writes them into `.env` for you with format validation and
+> optional live API check — see [`docs/configure.md`](configure.md).
+
 ---
 
 ## 1. Create the Slack app
