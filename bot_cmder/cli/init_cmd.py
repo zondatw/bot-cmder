@@ -26,7 +26,6 @@ Behavior on existing config:
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from importlib.resources import files
 from pathlib import Path
@@ -69,17 +68,18 @@ def _read_existing_master_key(env_path: Path) -> str | None:
     """Best-effort parse of `BOT_CMDER_MASTER_KEY=...` from an existing
     .env, so `--force` (without `--rotate-key`) preserves the key
     instead of regenerating it and silently breaking every existing
-    TOTP enrollment."""
+    TOTP enrollment.
+
+    Delegates to `EnvFile.get` (issue #45) so there's ONE .env parser
+    in the codebase. EnvFile handles all the edge cases (quoting,
+    duplicate keys, comments interleaved with assignments) that the
+    prior hand-rolled regex below missed.
+    """
+    from bot_cmder.cli._envfile import EnvFile
+
     if not env_path.is_file():
         return None
-    pattern = re.compile(r"^BOT_CMDER_MASTER_KEY\s*=\s*(.+?)\s*$")
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        if line.lstrip().startswith("#"):
-            continue
-        m = pattern.match(line)
-        if m:
-            return m.group(1).strip().strip('"').strip("'")
-    return None
+    return EnvFile.load(env_path).get("BOT_CMDER_MASTER_KEY")
 
 
 def _generate_master_key() -> str:
@@ -138,6 +138,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     print(f"Created {state}/")
     print()
     print("Next steps:")
+    print("  bot-cmder configure                          # walk through adapter credentials interactively")
     print("  bot-cmder enroll-totp --user telegram:<your-id>")
     print("  bot-cmder serve")
     return 0
