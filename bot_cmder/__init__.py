@@ -7,4 +7,4 @@ from __future__ import annotations
 # `bot_cmder/main.py` passes it to FastAPI's OpenAPI metadata, and the
 # CLI dispatcher prints it for `bot-cmder --version`. Bump here before
 # tagging a release; everything downstream picks up automatically.
-__version__ = "0.2.0"
+__version__ = "0.3.0"
