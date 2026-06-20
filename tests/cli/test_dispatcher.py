@@ -23,6 +23,7 @@ def test_help_lists_all_subcommands(capsys):
     for cmd in (
         "serve",
         "init",
+        "configure",
         "gen-master-key",
         "enroll-totp",
         "list-totp",
