@@ -34,6 +34,15 @@ from bot_cmder.config.paths import config_dir
 
 _PLATFORM_CHOICES = ("telegram", "discord", "slack", "all")
 
+
+class _Aborted(Exception):
+    """Operator picked `Abort` from the validation-failed menu. Carries
+    the platform name as its message. Caught by `cmd_configure`, which
+    restores that platform's pre-flow `env.lines` snapshot AND breaks
+    the `configure all` loop (operator wants OUT, not "keep walking"
+    — the `--abort` semantics in `docs/configure.md` promise both)."""
+
+
 # Maps each platform to the env keys that, if present, indicate the
 # platform is "configured". `_platform_status()` walks this map to
 # render the menu's status column.
@@ -345,10 +354,10 @@ def _ask_validate(platform: str, validator: Callable[[EnvFile], tuple[bool, str]
     """Ask `Validate against <platform> API?`, run validator if yes,
     and on failure offer Retry / Save anyway / Abort.
 
-    Returns:
-      'ok'     — validation succeeded OR operator opted not to validate
-      'save'   — validation failed, operator chose to save anyway
-      'abort'  — operator chose to abort (changes will be discarded)
+    Returns 'ok' for success / skipped / save-anyway. Raises
+    `_Aborted(platform)` if the operator picks Abort — propagates up
+    to `cmd_configure`, which restores the pre-flow env snapshot and
+    stops walking subsequent platforms.
     """
     import questionary
 
@@ -374,7 +383,9 @@ def _ask_validate(platform: str, validator: Callable[[EnvFile], tuple[bool, str]
         ).unsafe_ask()
         if choice == "retry":
             continue
-        return choice  # 'save' or 'abort'
+        if choice == "abort":
+            raise _Aborted(platform)
+        return "ok"  # save-anyway path
 
 
 # --- platform flows ----------------------------------------------------
@@ -443,10 +454,12 @@ def _flow_telegram(env: EnvFile, args: argparse.Namespace) -> bool:
     ):
         changed = True
 
-    # 4. Live validation (opt-in). Aborts discard all changes; save
-    # propagates True so cmd_configure writes despite the failure.
-    if changed and _ask_validate("Telegram", _validate_telegram, env) == "abort":
-        return False
+    # 4. Live validation (opt-in). Abort raises `_Aborted` which
+    # `cmd_configure` catches to restore the pre-flow env snapshot;
+    # save-anyway returns 'ok' so we fall through and the wizard
+    # writes despite the failure.
+    if changed:
+        _ask_validate("Telegram", _validate_telegram, env)
 
     return changed
 
@@ -540,9 +553,9 @@ def _flow_discord(env: EnvFile, args: argparse.Namespace) -> bool:
     ):
         changed = True
 
-    # Live validation (opt-in)
-    if changed and _ask_validate("Discord", _validate_discord, env) == "abort":
-        return False
+    # Live validation (opt-in) — see _flow_telegram for abort/save semantics
+    if changed:
+        _ask_validate("Discord", _validate_discord, env)
 
     return changed
 
@@ -656,9 +669,9 @@ def _flow_slack(env: EnvFile, args: argparse.Namespace) -> bool:
         ):
             changed = True
 
-    # Live validation (opt-in)
-    if changed and _ask_validate("Slack", _validate_slack, env) == "abort":
-        return False
+    # Live validation (opt-in) — see _flow_telegram for abort/save semantics
+    if changed:
+        _ask_validate("Slack", _validate_slack, env)
 
     return changed
 
@@ -742,19 +755,25 @@ def cmd_configure(args: argparse.Namespace) -> int:
         else:
             platform = args.platform
 
-        # Dispatch — each flow gates on _refuse_if_non_interactive at
-        # its own top, so we'd get the same exit-1 from inside the
-        # flow if --non-interactive was set. Caught here as a
-        # well-known sentinel: flows return False AND the
-        # `args._configure_blocked` flag set means "refused, not
-        # idempotent".
+        # Dispatch each platform flow. Per-platform snapshot is the
+        # rollback unit for `Abort` — restoring env.lines undoes ONLY
+        # that platform's mutations, so a prior platform that
+        # succeeded in `configure all` mode keeps its values. Break
+        # after restore: an operator who picks Abort wants out, not
+        # "keep walking the remaining platforms".
         any_changed = False
         flows_to_run = ("telegram", "discord", "slack") if platform == "all" else (platform,)
         for p in flows_to_run:
             if _refuse_if_non_interactive(args, reason=f"{p} credential flow"):
                 return 1
-            if _FLOWS[p](env, args):
-                any_changed = True
+            snapshot = list(env.lines)
+            try:
+                if _FLOWS[p](env, args):
+                    any_changed = True
+            except _Aborted as exc:
+                env.lines = snapshot
+                print(f"\nAborted {exc} — discarded its changes.", file=sys.stderr)
+                break
     except KeyboardInterrupt:
         print("\nAborted, no changes written.", file=sys.stderr)
         return 130

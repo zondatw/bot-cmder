@@ -168,14 +168,20 @@ class EnvFile:
         new_value = "" if value is None else value
         new_raw = f"{key}={new_value}\n"
 
-        # In-place update of existing key (overwrites the FIRST
-        # declaration; subsequent duplicates intentionally left alone
-        # — operators with a duplicated key likely have a deliberate
-        # override they don't want us to silently strip)
+        # Update the LAST matching line. `get()` returns last-wins
+        # (matches dotenv / shell `set -a` semantics), so if we
+        # touched the first match instead, a later duplicate would
+        # silently override our write and the wizard's set would be
+        # invisible to both `get()` and the runtime. The earlier
+        # duplicate is left as dead code rather than stripped — the
+        # operator may want it for context when re-editing by hand.
+        last_idx = None
         for i, line in enumerate(self.lines):
             if line.key == key:
-                self.lines[i] = EnvLine(raw=new_raw, key=key, value=new_value)
-                return
+                last_idx = i
+        if last_idx is not None:
+            self.lines[last_idx] = EnvLine(raw=new_raw, key=key, value=new_value)
+            return
 
         # New key — append, with the header on the first new append
         # only.

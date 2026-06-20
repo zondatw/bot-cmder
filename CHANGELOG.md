@@ -12,6 +12,23 @@ section gets renamed to `## [0.X.Y] - YYYY-MM-DD` (see
 
 ## [Unreleased]
 
+### Fixed
+
+- `bot-cmder configure all` — picking `Abort` from the validation-
+  failed menu now actually discards that platform's pending writes
+  AND stops walking subsequent platforms, matching the contract
+  promised in [`docs/configure.md`](docs/configure.md). Previously
+  the in-memory mutations leaked into `env.save()` and the loop
+  continued past the abort, so a Discord abort still wrote
+  Discord's half-set credentials plus walked Slack. Caught by
+  codex review on [#46]. ([#46])
+- `bot_cmder.cli._envfile.EnvFile.set()` now updates the LAST
+  matching duplicate-key line instead of the first, so it agrees
+  with `get()` / dotenv / shell `set -a` "last-wins" semantics.
+  Previously, on a `.env` with duplicate keys the wizard's write
+  would land on the earlier (overridden) line and be silently
+  invisible to the runtime. ([#46])
+
 ### Added
 
 - `bot-cmder configure` — interactive credential wizard for

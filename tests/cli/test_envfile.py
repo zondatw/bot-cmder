@@ -116,6 +116,29 @@ def test_duplicate_keys_last_wins_for_get_but_both_preserved(tmp_path):
     assert src.read_text(encoding="utf-8") == "FOO=first\nBAR=other\nFOO=second\n"
 
 
+def test_set_updates_effective_last_duplicate(tmp_path):
+    """set() must touch the LAST matching line so get() / runtime see
+    the new value. Touching the first match would leave the later
+    duplicate overriding it (last-wins is what dotenv / `set -a` do),
+    making the wizard's update silently invisible. Regression test
+    for codex review finding on PR #46."""
+    src = tmp_path / ".env"
+    src.write_text("FOO=first\nBAR=other\nFOO=second\n", encoding="utf-8")
+    env = EnvFile.load(src)
+
+    env.set("FOO", "WIZARD_WROTE")
+
+    # In-memory view: get() reflects the wizard's write.
+    assert env.get("FOO") == "WIZARD_WROTE"
+
+    # On-disk: the LAST duplicate (the one that would win under
+    # last-wins semantics) is the one that was rewritten. The earlier
+    # duplicate is left as dead code rather than stripped — the
+    # operator may want it for context when re-editing by hand.
+    env.save()
+    assert src.read_text(encoding="utf-8") == "FOO=first\nBAR=other\nFOO=WIZARD_WROTE\n"
+
+
 # --- 6-7. quoting -------------------------------------------------
 
 

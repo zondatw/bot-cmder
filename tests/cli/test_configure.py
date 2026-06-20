@@ -625,3 +625,69 @@ def test_slack_validate_success(tmp_path, fake_questionary):
     rc = main(["configure", "slack", "--config-dir", str(cfg)])
     assert rc == 0
     assert "SLACK_BOT_TOKEN=xoxb-fake-bot" in env_path.read_text(encoding="utf-8")
+
+
+# --- C10: regression for codex review findings on PR #46 --------------
+
+
+@respx.mock
+def test_configure_all_abort_discards_only_aborted_platform_and_stops(tmp_path, fake_questionary):
+    """`configure all` — Telegram succeeds, Discord fills + validates +
+    operator picks Abort. Must:
+
+      (a) keep Telegram's writes (other-platform changes survive — they
+          were independent decisions)
+      (b) discard Discord's in-memory mutations (Abort means abort)
+      (c) NOT walk Slack (operator picked out, not 'keep going')
+
+    Regression for the codex review finding that the dispatcher's
+    abort path silently wrote every platform's pending mutations.
+    """
+    cfg = tmp_path / "cfg"
+    env_path = _seed_env(cfg)
+
+    fake = fake_questionary(
+        [
+            # Top-level menu
+            "all",
+            # Telegram — full happy path, no validation
+            "polling",
+            "111:telegram-token-long-enough-to-pass-regex-xxx",
+            False,  # validate? No
+            # Discord — fill, validate, FAIL, pick Abort
+            "gateway",
+            "fake-discord-bot-token",
+            "111111111111111111",
+            "",  # skip guild_id
+            True,  # validate? Yes
+            "abort",  # validation failed → discard
+            # Slack answers should be UNCONSUMED — loop must break on abort
+            "events",
+            "xoxb-NEVER-USED",
+            "a" * 32,
+            "",
+            False,
+        ]
+    )
+    respx.get("https://discord.com/api/v10/users/@me").mock(
+        return_value=httpx.Response(401, json={"message": "401: Unauthorized"})
+    )
+
+    # No positional arg → menu fires, picks 'all' from the queue
+    rc = main(["configure", "--config-dir", str(cfg)])
+    assert rc == 0
+
+    contents = env_path.read_text(encoding="utf-8")
+    # (a) Telegram's writes survived
+    assert "TELEGRAM_MODE=polling" in contents
+    assert "TELEGRAM_TOKEN=111:telegram-token-long-enough-to-pass-regex-xxx" in contents
+    # (b) Discord's mutations discarded — none of its keys appear
+    assert "DISCORD_MODE" not in contents
+    assert "DISCORD_BOT_TOKEN" not in contents
+    assert "DISCORD_APPLICATION_ID" not in contents
+    # (c) Slack flow never ran — loop broke on abort. Five answers
+    # (events / bot token / signing secret / skip / validate?) should
+    # still be in the queue.
+    assert (
+        len(fake._answers) == 5
+    ), f"Slack answers were consumed — loop did not break on abort. Remaining: {list(fake._answers)}"
