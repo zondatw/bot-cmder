@@ -12,6 +12,14 @@ section gets renamed to `## [0.X.Y] - YYYY-MM-DD` (see
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-20
+
+Headline: `bot-cmder configure` — interactive credential wizard for
+Telegram / Discord / Slack — plus OTP brute-force lockout (default-on
+behavior change) and colorized log output for dev iteration. Two
+configure-wizard correctness fixes caught by independent codex review
+on the same PR landed before tagging.
+
 ### Fixed
 
 - `bot-cmder configure all` — picking `Abort` from the validation-
@@ -164,7 +172,8 @@ container image at `ghcr.io/zondatw/bot-cmder:0.2.0`.
   PyPI publish — short-lived OIDC token, no rotation required, no
   leak surface in repo secrets ([#23]).
 
-[Unreleased]: https://github.com/zondatw/bot-cmder/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/zondatw/bot-cmder/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/zondatw/bot-cmder/releases/tag/v0.3.0
 [0.2.0]: https://github.com/zondatw/bot-cmder/releases/tag/v0.2.0
 
 [#15]: https://github.com/zondatw/bot-cmder/issues/15
@@ -182,3 +191,4 @@ container image at `ghcr.io/zondatw/bot-cmder:0.2.0`.
 [#34]: https://github.com/zondatw/bot-cmder/pull/34
 [#35]: https://github.com/zondatw/bot-cmder/pull/35
 [#45]: https://github.com/zondatw/bot-cmder/issues/45
+[#46]: https://github.com/zondatw/bot-cmder/pull/46
