@@ -24,6 +24,12 @@ dependencies = [
     # envelope_id ack) instead of pulling in slack-sdk / aiohttp;
     # the protocol is small and the library is single-purpose.
     "websockets>=14.0",
+    # Issue #45 — `bot-cmder configure` interactive credential wizard.
+    # Provides arrow-key menu / password / confirm widgets via
+    # prompt_toolkit. Imported lazily inside cli/configure.py handlers
+    # so other subcommands (serve, init, --help) don't pay the import
+    # cost.
+    "questionary>=2.0",
     # `requests` and `environs` were dropped along with the legacy
     # bot_cmder/modules/hook/ + bot_cmder/settings/ packages: httpx and
     # pydantic-settings cover those needs in the new layout.
