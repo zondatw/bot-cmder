@@ -15,6 +15,7 @@ Multi-platform SRE ChatOps bot — drive maintenance operations from Telegram, D
 ```shell
 pip install bot-cmder
 bot-cmder init                              # scaffold ~/.config/bot-cmder/{app.yaml,.env} + state dir
+bot-cmder configure                         # interactive wizard — fill Telegram/Discord/Slack credentials
 # edit ~/.config/bot-cmder/app.yaml — add your users + ACL
 bot-cmder enroll-totp --user telegram:<your-id>
 bot-cmder serve

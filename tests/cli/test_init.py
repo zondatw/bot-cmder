@@ -77,6 +77,7 @@ def test_init_creates_three_artifacts(tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert "Next steps:" in out
+    assert "configure" in out  # issue #45 — new step
     assert "enroll-totp" in out
 
 

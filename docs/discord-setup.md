@@ -9,6 +9,11 @@ points at exactly where.
 > bot already runs locally with `just dev` reachable via a public
 > tunnel (`just tunnel-ngrok`).
 
+> **Prefer an interactive walkthrough?** Once you have the values from
+> the Discord developer portal (steps 1–3 below), `bot-cmder configure
+> discord` writes them into `.env` for you with format validation and
+> optional live API check — see [`docs/configure.md`](configure.md).
+
 ---
 
 ## 1. Create the Discord application
