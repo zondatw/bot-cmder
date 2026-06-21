@@ -42,7 +42,7 @@ jobs:
         python-version: ["3.10", "3.12"]
     steps:
       - name: Check out repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install uv (with cache)
         uses: astral-sh/setup-uv@v7
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.12
         # Single Python is enough — black / ruff / codespell are all
@@ -100,7 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install uv (with cache)
         uses: astral-sh/setup-uv@v7
@@ -175,7 +175,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Check out repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # gitleaks needs the FULL history to scan every commit in
           # the PR (not just the merge tip). Default checkout is a
